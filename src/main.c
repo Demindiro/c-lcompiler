@@ -3,8 +3,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
-#include "code-read/main.h"
+#include "code/read.h"
+#include "code/branch.h"
 #include "asm-gen/main.h"
+#include "util.h"
 
 int main(int argc, char **argv)
 {
@@ -12,8 +14,13 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Error: no files specified\n");
 		return 1;
 	}
-	printf("\n=== CODE READ ===\n");
-	code_read(argv[1]);
-	printf("\n===  ASM GEN  ===\n");
-	asm_gen();
+	debug("\n===  CODE READ  ===\n");
+	if (code_read(argv[1]) < 0)
+		return 1;
+	debug("\n=== CODE BRANCH ===\n");
+	if (code_branch() < 0)
+		return 1;
+	debug("\n===   ASM GEN   ===\n");
+	if (asm_gen() < 0)
+		return 1;
 }

@@ -30,18 +30,20 @@ typedef struct info_func {
 	char *body;
 } info_func;
 
+/*
 typedef struct info_cond {
 	char *type;
 	char *name;
 	char *cond;
 } info_cond;
+*/
 
 typedef struct info_for {
-	char *type;
-	char *name;
-	char *cond;
-	char *it_type;
-	char *it_name;
+	//char *type;
+	//char *name;
+	//char *cond;
+	char *it_var;
+	char *it_expr;
 	char *it_action;
 } info_for;
 

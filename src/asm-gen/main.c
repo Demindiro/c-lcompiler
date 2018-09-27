@@ -1,9 +1,17 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "../table.h"
-#include "../code-read/main.h"
+#include "../code/read.h"
+#include "../code/branch.h"
+#include "../util.h"
 
-const char *keywords[] = {
+typedef struct arg {
+	char *type;
+	const char *reg;
+} arg;
+
+const char *var_types[] = {
 	"sbyte",
 	"sshort",
 	"sint",
@@ -15,27 +23,199 @@ const char *keywords[] = {
 	"void",
 };
 
-static int is_l_keyword(char *str)
+const char *arg_regs[] = {
+	"$a0", "$a1", "$a2", "$a3",
+	"$a4", "$a5", "$a6", "$a7",
+};
+
+const char *temp_regs[] = {
+	"$t0", "$t1", "$t2", "$t3",
+	"$t4", "$t5", "$t6", "$t7",
+	"$t8", "$t9",
+};
+unsigned int temp_regs_taken;
+
+
+static int parse(branch *brs, size_t *index, table *tbl);
+
+static const char *get_temp_reg()
 {
-	for (size_t i = 0; i < sizeof(keywords) / sizeof(*keywords); i++)
-		if (strcmp(str, keywords[i]) == 0)
-			return 1;
+	for (size_t i = 0; i < sizeof(temp_regs) / sizeof(*temp_regs); i++) {
+		if (!(temp_regs_taken & (2 << i))) {
+			temp_regs_taken |= 2 << i;
+			return temp_regs[i];
+		}
+	}
+	return NULL;
+}
+
+static void free_temp_reg(const char *reg) {
+	size_t i = reg[2] - '0';
+	temp_regs_taken &= ~i;
+}
+
+static size_t is_var_type(char *str)
+{
+	for (size_t i = 0; i < sizeof(var_types) / sizeof(*var_types); i++)
+		if (strcmp(str, var_types[i]) == 0)
+			return i;
+	return -1;
+}
+
+static int eval_expr(char *ptr, const char *dest_reg, table *tbl)
+{
+	if (ptr == NULL)
+		return 0;
+	char buf[0xFFFF];
+	SKIP_WHITE(ptr);
+	char *orgptr = ptr;
+	// TODO
+	// 0: *,/,% 
+	// 1: &&, ||
+	// 2,~
+	// 3: <,>,<=,>=,==,!=
+	// 4: +,- : 0
+	int rang = 0; 
+	const char *op, *rd, *rs1, *rs2;
+	rd = dest_reg;
+	rs1 = "RS1_UNDEF";
+	rs2 = "RS2_UNDEF";
+	char *tmp;
+	char *d = buf;
+	while (IS_VAR_CHAR(*ptr))
+		*(d++) = *(ptr++);
+	*d = 0;
+	if ('0' <= buf[0] && buf[0] <= '9') {
+		printf("\tli\t%s,%s\n", rd, buf);
+	} else {
+		arg a;
+		// The compiler seems to be doing something weird when passing &buf directly (ignoring &)?
+		char *b = buf;
+		if (table_get(tbl, &b, &a) < 0) {
+			fprintf(stderr, "Undefined symbol: %s\n", buf);
+			return -1;
+		}
+		rs1 = a.reg;
+		printf("\tmv\t%s,%s\n", rd, rs1);
+	}
+	rs1 = rd;
+	SKIP_WHITE(ptr);
+	if (*ptr == 0)
+		return 0;
+	while (1) {
+		int swap_regs = 0;
+		switch (*ptr) {
+		case '(': eval_expr(ptr, "RD", tbl); break;
+		case ')': return 0;
+		case '+': op = "add"; break;
+		case '-': op = "sub"; break;
+		case '*': op = "mul"; break;
+		case '/': op = "div"; break;
+		case '%': op = "rem"; break;
+		case '!':
+			if (*(ptr+1) == '=') {
+				op = "????";
+				ptr++;
+			} else {
+				op = "snez";
+			}
+			break;
+		case '=':
+			if (*(++ptr) == '=') {
+				op = "seqz";
+			} else {
+				fprintf(stderr, "Assignment inside expression is not supported\n");
+				return -1;
+			}
+			break;
+		case '>': swap_regs = 1;
+		case '<': op = "slt"; break;
+		default: fprintf(stderr, "Invalid sequence: '%s'\n", orgptr); return -1;
+		}
+		while (!IS_VAR_CHAR(*ptr))
+			*(d++) = *(ptr++);
+		SKIP_WHITE(ptr);
+		d = buf;
+		while (IS_VAR_CHAR(*ptr))
+			*(d++) = *(ptr++);
+		*d = 0;
+		if ('0' <= buf[0] && buf[0] <= '9') {
+			printf("\tli\t%s,%s\n", rd, buf);
+		} else {
+			arg a;
+			char *b = buf;
+			if (table_get(tbl, &b, &a) < 0) {
+				printf("Undefined symbol: '%s'\n", buf);
+				return -1;
+			}
+			rs2 = a.reg;
+			if (swap_regs)
+				SWAP(const char *, rs1, rs2);
+			printf("\t%s\t%s,%s,%s\n", op, rd, rs1, rs2);
+		}
+		SKIP_WHITE(ptr);
+		if (*ptr == 0)
+			return 0;
+		if (swap_regs)
+			SWAP(const char *, rs1, rs2);
+	}
+}
+
+static int parse_control_word(branch *brs, size_t *index, table *tbl)
+{
+	branch br = brs[*index];
+	if (br.flags & BRANCH_CTYPE_IF) {
+		const char *r = get_temp_reg();
+		eval_expr(br.ptr, r, tbl);
+		printf("\tbeqz\t%s,TODO\n", r);
+		(*index)++;
+		parse(brs, index, tbl);
+		printf("TODO:\n");
+		free_temp_reg(r);
+	} else if (br.flags & BRANCH_CTYPE_RET) {
+		eval_expr(br.ptr, "$v0", tbl);
+		printf("\tret\n");
+	} else {
+		fprintf(stderr, "Invalid control type flags! 0x%x (Please file a bug report)\n", br.flags);
+		return -1;
+	}
 	return 0;
 }
 
-static int parse(char **pptr, char *end, info *inf, table *tbl)
+static int parse_var(branch br, table *tbl)
 {
-	char *ptr = strtok(*pptr, "\t \n");
-	if (is_l_keyword(ptr)) {
-		code_parse(&ptr, end, inf);
-	} else {
-		char *val;
-		if (table_get(tbl, ptr, val) < 0) {
-			printf("Entry undefined: %s\n", ptr);
+	info_var *inf = br.ptr;
+	arg a;
+	if (inf->type != NULL) {
+		a.type = inf->type;
+		a.reg = get_temp_reg();
+		if (table_add(tbl, &inf->name, &a) < 0) {
+			fprintf(stderr, "Duplicate symbol: '%s'\n", inf->name);
 			return -1;
 		}
+	} else if (table_get(tbl, &inf->name, &a) < 0) {
+		fprintf(stderr, "Undefined symbol: '%s'\n", inf->name);
+		return -1;
 	}
-	*pptr = ptr;
+	return eval_expr(inf->value, a.reg, tbl);
+}
+
+static int parse(branch *brs, size_t *index, table *tbl)
+{
+	branch br = brs[*index];
+	if (br.flags & BRANCH_ISLEAF) {
+		if (br.flags & BRANCH_TYPE_C)
+			return parse_control_word(brs, index, tbl);
+		else if (br.flags & BRANCH_TYPE_VAR)
+			return parse_var(br, tbl);
+		fprintf(stderr, "Invalid type flags! 0x%x (Please file a bug report)\n", br.flags);
+		return -1;
+	} else {
+		for (size_t i = 0; i < br.len; i++) {
+			if (parse(br.ptr, &i, tbl) < 0)
+				return -1;
+		}
+	}
 }
 
 static int convert_var(info_var *inf)
@@ -58,40 +238,53 @@ static int convert_var(info_var *inf)
 	printf("\n");
 }
 
-static int convert_func(info_func *inf)
+static int cmp_keys(const void *a, const void *b)
 {
-	table tbl;
-	table_init(&tbl, sizeof(char *), sizeof(char *));
-	char *saveptr;
-	printf("%s:\n", inf->name);
-	char *ptr = inf->body;
-	char *end = ptr + strlen(inf->body);
-	while (1) {
-		info i;
-		switch (parse(&ptr, end, &i, &tbl)) {
-		case 0:
-			goto double_break;
-		case INFO_VAR:
-			break;
-		case INFO_FUNC:
-			convert_func((info_func *)&i);
-			break;
-		}
-		if (ptr == NULL)
-			break;
+	char *const *x = a, *const *y = b;
+	return strcmp(*x, *y);
+}
+
+static int convert_func(info_func *inf, branch root)
+{
+	if (inf->arg_count > sizeof(arg_regs) / sizeof(*arg_regs)) {
+		fprintf(stderr, "Function '%s' has %d too many arguments (max: %d)\n",
+		        inf->name, inf->arg_count - (sizeof(arg_regs) / sizeof(*arg_regs)),
+			sizeof(arg_regs) / sizeof(*arg_regs));
+		return -1;
 	}
-double_break:
-	return 0;
+	table tbl;
+	table_init(&tbl, sizeof(char *), sizeof(arg), cmp_keys);
+	for (char i = 0; i < inf->arg_count; i++) {
+		arg a;
+		a.type = inf->arg_types[i];
+		a.reg = arg_regs[i];
+		if (table_add(&tbl, &inf->arg_names[i], &a) < 0) {
+			fprintf(stderr, "Duplicate entry: %s\n", inf->arg_names[i]);
+			return -1;
+		}
+	}
+	printf("%s:\n", inf->name);
+	for (size_t i = 0; i < root.len; i++) {
+		if (parse(root.ptr, &i, &tbl) < 0)
+			return -1;
+	}
+	printf("\n");
 }
 
 int asm_gen()
 {
-	printf("DATA\n");
+	int r = 0;
+	printf("section data\n");
 	for (size_t i = 0; i < global_vars_count; i++) {
-		convert_var(&global_vars[i]);	
+		if (convert_var(&global_vars[i]) < 0)
+			goto error;	
 	}
-	printf("TEXT\n");
+	printf("section text\n");
 	for (size_t i = 0; i < global_funcs_count; i++) {
-		convert_func(&global_funcs[i]);
+		if (convert_func(&global_funcs[i], global_func_branches[i]) < 0)
+			goto error;
 	}
+error:
+	r = -1;
+	return r;
 }

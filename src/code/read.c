@@ -1,10 +1,11 @@
-#include "main.h"
+#include "read.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
 #include "../info.h"
+#include "../util.h"
 
 #define WHITE(x) (x == ' ' || x == '\t')
 
@@ -34,11 +35,15 @@ static int parse_func(char **pptr, info *inf)
 	char *ptr = *pptr;
 	size_t i;
 	for (i = 0; i < sizeof(iv->arg_types); i++) {
-		while (WHITE(*ptr))
-			ptr++;
+		SKIP_WHITE(ptr);
 		iv->arg_types[i] = ptr;
-		while (!WHITE(*ptr))
+		while (!WHITE(*ptr) && *ptr != ')')
 			ptr++;
+		if (*ptr == ')') {
+			i--;
+			ptr++;
+			goto done;
+		}
 		*(ptr++) = 0;
 		while (WHITE(*ptr))
 			ptr++;
@@ -63,22 +68,28 @@ done:
 	while (*ptr != '{')
 		ptr++;
 	iv->body = ++ptr;
-	while (*ptr != '}')
+	int c = 0;
+	while (1) {
+		if (*ptr == '}')
+			c--;
+		else if (*ptr == '{')
+			c++;
+		if (c < 0)
+			break;
 		ptr++;
-	*(ptr++) = 0;
-	*pptr = ptr;
+	}
+	*ptr = 0;
+	*pptr = ptr + 1;
 	return 0;
 }
 
 
 int code_parse(char **pptr, char *end, info *inf)
 {
+	SKIP_WHITE(*pptr);
+	if (**pptr == 0)
+		return 0;
 	char *ptr = *pptr;
-	while (WHITE(*ptr) || *ptr == '\n') {
-		ptr++;
-		if (ptr >= end)
-			return 0;
-	}
 	inf->type = ptr;
 	while (!WHITE(*ptr))
 		ptr++;
@@ -132,18 +143,18 @@ int code_read(char *file)
 		}
 	}
 done:
-	printf("GLOBAL VARIABLES: %lu\n", global_vars_count);
+	debug("GLOBAL VARIABLES: %lu", global_vars_count);
 	for (size_t i = 0; i < global_vars_count; i++) {
 		info_var *iv = &global_vars[i];
-		printf("  name: '%s',  type: '%s',  value: '%s'\n", iv->name, iv->type, iv->value);
+		debug("  name: '%s',  type: '%s',  value: '%s'", iv->name, iv->type, iv->value);
 	}
-	printf("GLOBAL FUNCTIONS: %lu\n", global_funcs_count);
+	debug("GLOBAL FUNCTIONS: %lu", global_funcs_count);
 	for (size_t i = 0; i < global_funcs_count; i++) {
 		info_func *iv = &global_funcs[i];
-		printf("  name: '%s', type: '%s'\n", iv->name, iv->type);
+		debug("  name: '%s', type: '%s'", iv->name, iv->type);
 		for (size_t i = 0; i < iv->arg_count; i++)
-			printf("    name: '%s', type: '%s'\n", iv->arg_names[i], iv->arg_types[i]);
-		printf("'''%s'''\n", iv->body);
+			debug("    name: '%s', type: '%s'", iv->arg_names[i], iv->arg_types[i]);
+		debug("'''%s'''", iv->body);
 	}
 	return 0;
 }

@@ -13,7 +13,7 @@ static size_t get_index(table *t, const void *key)
 }
 
 
-int table_init(table *t, size_t keylen, size_t vallen)
+int table_init(table *t, size_t keylen, size_t vallen, int (*cmp)(const void *key1, const void *key2))
 {
 	t->capacity = 16;
 	t->keylen = keylen;
@@ -27,6 +27,7 @@ int table_init(table *t, size_t keylen, size_t vallen)
 		return -1;
 	}
 	t->count = 0;
+	t->cmp = cmp;
 	return 0;
 }
 
@@ -66,4 +67,14 @@ int table_get(table *t, const void *key, void *value)
 		return -1;
 	memcpy(value, ((char *)t->values) + (i * t->vallen), t->vallen);
 	return 0;
+}
+
+int table_add(table *t, const void *key, const void *value)
+{
+	size_t i = get_index(t, key);
+	if (i != -1)
+		return -1;
+	i = t->count++;
+	memcpy(((char *)t->keys  ) + (i * t->keylen), key  , t->keylen);
+	memcpy(((char *)t->values) + (i * t->vallen), value, t->vallen);
 }
