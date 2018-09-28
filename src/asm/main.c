@@ -49,6 +49,15 @@ static const char *get_temp_reg()
 	return NULL;
 }
 
+static int get_label(char *buf, char *prefix)
+{
+	static int counter = 0;
+	if (prefix == NULL)
+		prefix = "L";
+	sprintf(buf, ".%s%d", prefix, counter++);
+	return 0;
+}
+
 static void free_temp_reg(const char *reg) {
 	size_t i = reg[2] - '0';
 	temp_regs_taken &= ~i;
@@ -140,7 +149,8 @@ static int eval_expr(char *ptr, const char *dest_reg, table *tbl)
 			*(d++) = *(ptr++);
 		*d = 0;
 		if ('0' <= buf[0] && buf[0] <= '9') {
-			printf("\tli\t%s,%s\n", rd, buf);
+			rs2 = get_temp_reg();
+			printf("\tli\t%s,%s\n", rs2, buf);
 		} else {
 			arg a;
 			char *b = buf;
@@ -149,10 +159,10 @@ static int eval_expr(char *ptr, const char *dest_reg, table *tbl)
 				return -1;
 			}
 			rs2 = a.reg;
-			if (swap_regs)
-				SWAP(const char *, rs1, rs2);
-			printf("\t%s\t%s,%s,%s\n", op, rd, rs1, rs2);
 		}
+		if (swap_regs)
+			SWAP(const char *, rs1, rs2);
+		printf("\t%s\t%s,%s,%s\n", op, rd, rs1, rs2);
 		SKIP_WHITE(ptr);
 		if (*ptr == 0)
 			return 0;
@@ -165,16 +175,32 @@ static int parse_control_word(branch *brs, size_t *index, table *tbl)
 {
 	branch br = brs[*index];
 	if (br.flags & BRANCH_CTYPE_IF) {
+		branch *brelse = &brs[*index + 2];
+		if (!(brelse->flags & BRANCH_TYPE_C && brelse->flags & BRANCH_CTYPE_ELSE))
+			brelse = NULL;
+		char buf[16], buf2[16], *lbl = buf;
+		get_label(buf, brelse == NULL ? "end" : "else");
 		const char *r = get_temp_reg();
 		eval_expr(br.ptr, r, tbl);
-		printf("\tbeqz\t%s,TODO\n", r);
+		printf("\tbeqz\t%s,%s\n", r, lbl);
 		(*index)++;
 		parse(brs, index, tbl);
-		printf("TODO:\n");
+		if (brelse != NULL) {
+			get_label(buf2, "end");
+			printf("\tj %s\n", buf2);
+			printf("%s:\n", lbl);
+			lbl = buf2;
+			(*index) += 2;
+			parse(brs, index, tbl);
+		}
+		printf("%s:\n", lbl);
 		free_temp_reg(r);
 	} else if (br.flags & BRANCH_CTYPE_RET) {
 		eval_expr(br.ptr, "$v0", tbl);
 		printf("\tret\n");
+	} else if (br.flags & BRANCH_CTYPE_ELSE) {
+		fprintf(stderr, "'ELSE' without 'IF' (should have been caught earlier, please file a bug report)\n");
+		return -1;
 	} else {
 		fprintf(stderr, "Invalid control type flags! 0x%x (Please file a bug report)\n", br.flags);
 		return -1;

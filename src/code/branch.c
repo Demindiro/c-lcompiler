@@ -24,16 +24,17 @@ static void debug_branch(branch br)
 		switch(br.flags & BRANCH_CTYPE_MASK) {
 		case BRANCH_CTYPE_WHILE: debug("%*cWHILE '%s'", r, ' ', br.ptr); return;
 		case BRANCH_CTYPE_IF:    debug("%*cIF    '%s'", r, ' ', br.ptr); return;
+		case BRANCH_CTYPE_ELSE:  debug("%*cELSE"      , r, ' '        ); return;
 		case BRANCH_CTYPE_RET:   debug("%*cRET   '%s'", r, ' ', br.ptr); return;
 		case BRANCH_CTYPE_FOR:   debug("%*cFOR   '%s' '%s' '%s'", r, ' ', i->it_var, i->it_expr, i->it_action); return;
 		}
 		debug("Invalid control type flag 0x%x", br.flags);
-		abort();
+		exit(1);
 	}
 	default:
 	{
 		debug("Invalid type flag 0x%x", br.flags);
-		abort();
+		exit(1);
 	}
 	}
 }
@@ -122,23 +123,33 @@ static int is_control_word(const char *str, char **pptr, branch *br)
 		*pptr = ptr + 1;
 		return 1;
 	}
+	if (strcmp(str, "else") == 0) {
+		br->flags |= BRANCH_TYPE_C | BRANCH_CTYPE_ELSE;
+		*pptr = ptr - 1; // There is no character (')', ';' ...) to skip, so no +1
+		                 // TODO figure out why -1 fixes things with semicolons
+		return 1;
+	}
 	return 0;
 }
 
 static int new_root(char **pptr, branch *root) {
 	char *ptr = *pptr;
 	branch br;
+	br.len = 0;
 	br.flags = 0;
 	br.ptr = malloc(1024 * sizeof(branch));
-	while (*ptr != '}') {
-		if (*ptr == 0) {
+	int c = 0;
+	while (1) {
+		if (*ptr == '{') {
+			c++;
+		} else if (*ptr == '}') {
+			c--;
+		} else if (*ptr == 0) {
 			fprintf(stderr, "Expected '}' ('%s')\n", *pptr);
 			return -1;
 		}
-		if (*ptr == '{') {
-			if (new_root(&ptr, &br) < 0)
-				return -1;
-		}
+		if (c < 0)
+			break;
 		ptr++;
 	}
 	*ptr = 0;
@@ -153,7 +164,7 @@ done:
 	br.ptr = realloc(br.ptr, br.len * sizeof(branch));
 	*pptr = ptr + 1;
 	((branch *)root->ptr)[root->len++] = br;
-	return 0; 
+	return 0;
 }
 
 static int parse(char **pptr, branch *root)
@@ -167,8 +178,17 @@ static int parse(char **pptr, branch *root)
 	char *ptr = *pptr;
 	if (*ptr == 0)
 		return 0;
+	if (*ptr == '{') {
+		recurse_lvl++;
+		ptr++;
+		if (new_root(&ptr, root) < 0)
+			return -1;
+		recurse_lvl--;
+		*pptr = ptr;
+		return 1;
+	} 	
 	char *orgptr = ptr;
-	while (!IS_WHITE(ptr) && *ptr != ';' && !IS_OPERATOR(*ptr) && *ptr != '(' && *ptr != '{')
+	while (!IS_WHITE(ptr) && *ptr != ';' && !IS_OPERATOR(*ptr) && *ptr != '(')
 		ptr++;
 	if (!IS_WHITE(ptr)) {
 		c = *ptr;
@@ -178,15 +198,7 @@ static int parse(char **pptr, branch *root)
 		SKIP_WHITE(ptr);
 		c = *ptr;
 	}
-	if (c == '{') {
-		recurse_lvl++;
-		ptr++;
-		if (new_root(&ptr, root) < 0)
-			return -1;
-		recurse_lvl--;
-		*pptr = ptr;
-		return 1;
-	} else if (is_type_name(orgptr)) {
+	if (is_type_name(orgptr)) {
 		type = orgptr;
 		orgptr = ptr;
 		if (!('a' <= *ptr && *ptr <= 'z') && !('A' <= *ptr && *ptr <= 'Z') && *ptr != '_') {
@@ -241,7 +253,7 @@ static int parse(char **pptr, branch *root)
 		}
 		ptr++;
 	}
-done:
+done:	
 	debug_branch(br);
 	((branch *)root->ptr)[root->len++] = br;
 	*pptr = ptr + 1; // Skip ';'
