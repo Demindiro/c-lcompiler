@@ -88,23 +88,31 @@ static char *get_op(int flags)
 }
 
 
+static const char *get_val_or_reg(expr_branch root, table *tbl)
+{
+	if (root.flags & EXPR_ISNUM) {
+		return root.val;
+	} else { 
+		arg a;
+		if (table_get(tbl, &root.val, &a) < 0) {
+			fprintf(stderr, "Undefined symbol: %s\n", root.val);
+			return NULL;
+		}
+		return a.reg;
+	}
+}
+
+
 static int _eval_expr(expr_branch root, table *tbl)
 {
 	const char *op = get_op(root.flags), *ar;
 	if (op == NULL)
 		return -1;
 	if (root.flags & EXPR_ISLEAF) {
-		if (root.flags & EXPR_ISNUM) {
-			ar = root.val;
-		} else { 
-			arg a;
-			if (table_get(tbl, &root.val, &a) < 0) {
-				fprintf(stderr, "Undefined symbol: %s\n", root.val);
-				return -1;
-			}
-			ar = a.reg;
-		}
-		printf(op, ar);
+		const char *arg = get_val_or_reg(root, tbl);
+		if (arg == NULL)
+			return -1;
+		printf(op, arg);
 	} else {
 		const char *treg = get_temp_reg();
 		printf("\tmov\t%s,rax\n", treg);
@@ -122,16 +130,22 @@ static int _eval_expr(expr_branch root, table *tbl)
 
 static int eval_expr(expr_branch root, const char *dreg, table *tbl)
 {
-	if (strcmp(dreg, "rax") != 0)
-		printf("\tpush\trax\n");
-	int r = _eval_expr(root, tbl);
-	if (r < 0)
-		return r;
-	if (strcmp(dreg, "rax") != 0) {
-		printf("\tmov\t%s,rax\n"
-		       "\tpop\trax\n", dreg);
+	if (root.flags & EXPR_ISLEAF) {
+		const char *arg = get_val_or_reg(root, tbl);
+		if (arg == NULL)
+			return -1;
+		printf("\tmov\t%s,%s\n", dreg, arg);
+	} else {
+		if (strcmp(dreg, "rax") != 0)
+			printf("\tpush\trax\n");
+		if (_eval_expr(root, tbl) < 0)
+			return -1;
+		if (strcmp(dreg, "rax") != 0) {
+			printf("\tmov\t%s,rax\n"
+			       "\tpop\trax\n", dreg);
+		}
 	}
-	return r;
+	return 0;
 }
 
 
