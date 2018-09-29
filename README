@@ -1,3 +1,0 @@
-The sole purpose of this compiler is to compile the actual L compiler that is written in L.
-You can also compile other programs with it but it is not recommended as there will be no
-optimization.
