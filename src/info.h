@@ -9,7 +9,8 @@
 #define INFO_COND 3
 #define INFO_FOR  4
 
-
+// Currently only a placeholder for buffers
+// Should be deprecated and removed sometime
 typedef struct info {
 	char *type;
 	char *name;

@@ -6,44 +6,61 @@
 #include "branch.h"
 
 
-const char *expr_op_to_str(int flags)
-{
-	switch (flags & EXPR_OP_MASK) {
-	case 0:              return "none";
-	// Arithemic
-	case EXPR_OP_A_ADD:  return "+";
-	case EXPR_OP_A_SUB:  return "-";
-	case EXPR_OP_A_MUL:  return "*";
-	case EXPR_OP_A_DIV:  return "/";
-	case EXPR_OP_A_REM:  return "%";
-	case EXPR_OP_A_MOD:  return "%%";
-	// Comparison
-	case EXPR_OP_C_EQU:  return "==";
-	case EXPR_OP_C_NEQ:  return "!=";
-	case EXPR_OP_C_GRT:  return "<";
-	case EXPR_OP_C_LST:  return ">";
-	case EXPR_OP_C_GET:  return ">=";
-	case EXPR_OP_C_LET:  return "<=";
-	// Logical
-	case EXPR_OP_L_NOT:  return "!";
-	case EXPR_OP_L_AND:  return "&&";
-	case EXPR_OP_L_OR :  return "||";
-	// Bitwise
-	case EXPR_OP_B_NOT:  return "~";
-	case EXPR_OP_B_AND:  return "&";
-	case EXPR_OP_B_OR :  return "|";
-	case EXPR_OP_B_XOR:  return "^";
-	case EXPR_OP_B_LS :  return "<<";
-	case EXPR_OP_B_RS :  return ">>";
-	}
-	fprintf(stderr, "Invalid expression operator flag! 0x%x (This is a bug)\n", flags);
-	exit(1);
+#ifndef NDEBUG
+
+static const char *expr_op_to_str(int flags)
+{       
+        switch (flags & EXPR_OP_MASK) {
+        case 0:              return "none";
+        // Arithemic
+        case EXPR_OP_A_ADD:  return "+";
+        case EXPR_OP_A_SUB:  return "-";
+        case EXPR_OP_A_MUL:  return "*";
+        case EXPR_OP_A_DIV:  return "/";
+        case EXPR_OP_A_REM:  return "%";
+        case EXPR_OP_A_MOD:  return "%%";
+        // Comparison
+        case EXPR_OP_C_EQU:  return "==";
+        case EXPR_OP_C_NEQ:  return "!=";
+        case EXPR_OP_C_GRT:  return ">";
+        case EXPR_OP_C_LST:  return "<";
+        case EXPR_OP_C_GET:  return ">=";
+        case EXPR_OP_C_LET:  return "<=";
+        // Logical
+        case EXPR_OP_L_NOT:  return "!";
+        case EXPR_OP_L_AND:  return "&&";
+        case EXPR_OP_L_OR :  return "||";
+        // Bitwise
+        case EXPR_OP_B_NOT:  return "~";
+        case EXPR_OP_B_AND:  return "&";
+        case EXPR_OP_B_OR :  return "|";
+        case EXPR_OP_B_XOR:  return "^";
+        case EXPR_OP_B_LS :  return "<<";
+        case EXPR_OP_B_RS :  return ">>";
+        }
+        fprintf(stderr, "Invalid expression operator flag! 0x%x (This is a bug)\n", flags);
+        exit(1);
 }
+
+void debug_expr(expr_branch br, int lvl)
+{
+        if (br.flags & EXPR_ISLEAF) {
+                debug("%*cOP '%s', VAL '%s' (%s)",
+                      lvl, ' ', expr_op_to_str(br.flags), br.val, (br.flags & EXPR_ISNUM) ? "num" : "var");
+        } else {
+                debug("%*cEXPR '%s'", lvl, ' ', expr_op_to_str(br.flags));
+                for (size_t i = 0; i < br.len; i++)
+                        debug_expr(br.branches[i], lvl + 2);
+        }
+}
+
+#endif
+
 
 static char *copy_var(char **pptr) {
 	char *ptr = *pptr;
 	if (*ptr == '+' || *ptr == '-')
-		*ptr++;
+		ptr++;
 	if (*ptr == '0') {
 		ptr++;
 		if (*ptr == 'x') {

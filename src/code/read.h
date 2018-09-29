@@ -1,5 +1,5 @@
-#ifndef FASE_CODEREAD_MAIN_H
-#define FASE_CODEREAD_MAIN_H
+#ifndef CODE_READ_H
+#define CODE_READ_H
 
 #include <stddef.h>
 #include "../info.h"

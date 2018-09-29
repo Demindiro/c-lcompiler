@@ -1,8 +1,6 @@
 #ifndef EXPR_H
 #define EXPR_H
 
-#include "branch.h"
-
 #define EXPR_MASK
 #define EXPR_ISLEAF 0x100
 
@@ -51,5 +49,11 @@ typedef struct expr_branch {
 } expr_branch;
 
 int expr_parse(char **pptr, expr_branch *root);
+
+#ifndef NDEBUG
+void debug_expr(expr_branch br, int lvl);
+#else
+#define debug_expr(br, lvl) ""
+#endif
 
 #endif

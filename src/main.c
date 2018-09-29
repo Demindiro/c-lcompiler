@@ -5,6 +5,7 @@
 #include <string.h>
 #include "code/read.h"
 #include "code/branch.h"
+#include "code/optimize.h"
 #include "asm/gen.h"
 #include "util.h"
 
@@ -14,13 +15,16 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Error: no files specified\n");
 		return 1;
 	}
-	debug("\n===  CODE READ  ===\n");
+	debug("\n===   CODE READ   ===\n");
 	if (code_read(argv[1]) < 0)
 		return 1;
-	debug("\n=== CODE BRANCH ===\n");
+	debug("\n===  CODE BRANCH  ===\n");
 	if (code_branch() < 0)
 		return 1;
-	debug("\n===   ASM GEN   ===\n");
+	debug("\n=== CODE OPTIMIZE ===\n");
+	if (code_optimize() < 0)
+		return 1;
+	debug("\n===    ASM GEN    ===\n");
 	if (asm_gen() < 0)
 		return 1;
 }

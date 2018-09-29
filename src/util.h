@@ -1,6 +1,8 @@
 #ifndef UTIL_H
 #define UTIL_H
 
+#include <stdio.h>
+
 #define IS_WHITE(ptr) (*ptr == ' ' || *ptr == '\t' || *ptr == '\n')
 #define IS_OPERATOR(c) (strchr("=<>""+-""*/%""&|^", c) != NULL)
 #define IS_VAR_CHAR(c) (('0' <= c && c <= '9') || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || c == '_')

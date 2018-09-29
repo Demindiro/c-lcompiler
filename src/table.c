@@ -77,4 +77,5 @@ int table_add(table *t, const void *key, const void *value)
 	i = t->count++;
 	memcpy(((char *)t->keys  ) + (i * t->keylen), key  , t->keylen);
 	memcpy(((char *)t->values) + (i * t->vallen), value, t->vallen);
+	return 0;
 }
