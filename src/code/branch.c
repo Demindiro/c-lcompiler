@@ -5,39 +5,11 @@
 #include "read.h"
 #include "../util.h"
 #include "../branch.h"
+#include "../expr.h"
+
 
 static int recurse_lvl = 1;
 
-static void debug_branch(branch br)
-{
-	int r = recurse_lvl * 2;
-	switch (br.flags & BRANCH_TYPE_MASK) {
-	case BRANCH_TYPE_VAR:
-	{
-		info_var *i = br.ptr; 
-		debug("%*cVAR   '%s' '%s' '%s'", r, ' ', i->type, i->name, i->value);
-		return;
-	}
-	case BRANCH_TYPE_C:
-	{
-		info_for *i = br.ptr;
-		switch(br.flags & BRANCH_CTYPE_MASK) {
-		case BRANCH_CTYPE_WHILE: debug("%*cWHILE '%s'", r, ' ', br.ptr); return;
-		case BRANCH_CTYPE_IF:    debug("%*cIF    '%s'", r, ' ', br.ptr); return;
-		case BRANCH_CTYPE_ELSE:  debug("%*cELSE"      , r, ' '        ); return;
-		case BRANCH_CTYPE_RET:   debug("%*cRET   '%s'", r, ' ', br.ptr); return;
-		case BRANCH_CTYPE_FOR:   debug("%*cFOR   '%s' '%s' '%s'", r, ' ', i->it_var, i->it_expr, i->it_action); return;
-		}
-		debug("Invalid control type flag 0x%x", br.flags);
-		exit(1);
-	}
-	default:
-	{
-		debug("Invalid type flag 0x%x", br.flags);
-		exit(1);
-	}
-	}
-}
 
 static const char *var_types[] = {
 	"sbyte",
@@ -51,7 +23,98 @@ static const char *var_types[] = {
 	"void",
 };
 
+// ====
+
+static const char *expr_op_to_str(int flags)
+{
+	switch (flags & EXPR_OP_MASK) {
+	case 0:              return "none";
+	// Arithemic
+	case EXPR_OP_A_ADD:  return "+";
+	case EXPR_OP_A_SUB:  return "-";
+	case EXPR_OP_A_MUL:  return "*";
+	case EXPR_OP_A_DIV:  return "/";
+	case EXPR_OP_A_REM:  return "%";
+	case EXPR_OP_A_MOD:  return "%%";
+	// Comparison
+	case EXPR_OP_C_EQU:  return "==";
+	case EXPR_OP_C_NEQ:  return "!=";
+	case EXPR_OP_C_GRT:  return ">";
+	case EXPR_OP_C_LST:  return "<";
+	case EXPR_OP_C_GET:  return ">=";
+	case EXPR_OP_C_LET:  return "<=";
+	// Logical
+	case EXPR_OP_L_NOT:  return "!";
+	case EXPR_OP_L_AND:  return "&&";
+	case EXPR_OP_L_OR :  return "||";
+	// Bitwise
+	case EXPR_OP_B_NOT:  return "~";
+	case EXPR_OP_B_AND:  return "&";
+	case EXPR_OP_B_OR :  return "|";
+	case EXPR_OP_B_XOR:  return "^";
+	case EXPR_OP_B_LS :  return "<<";
+	case EXPR_OP_B_RS :  return ">>";
+	}
+	fprintf(stderr, "Invalid expression operator flag! 0x%x (This is a bug)\n", flags);
+	exit(1);
+}
+
+static void debug_expr(expr_branch br, int lvl)
+{
+	if (br.flags & EXPR_ISLEAF) {
+		debug("%*cOP '%s', VAL '%s' (%s)",
+                      lvl, ' ', expr_op_to_str(br.flags), br.val, (br.flags & EXPR_ISNUM) ? "num" : "var");
+	} else {
+		debug("%*cEXPR '%s'", lvl, ' ', expr_op_to_str(br.flags));
+		for (size_t i = 0; i < br.len; i++)
+			debug_expr(br.branches[i], lvl + 2);
+	}
+}
+
+
+static void debug_branch(branch br)
+{
+	int r = recurse_lvl * 2;
+	switch (br.flags & BRANCH_TYPE_MASK) {
+	case BRANCH_TYPE_VAR:
+	{
+		info_var *i = br.ptr; 
+		debug("%*cVAR '%s' '%s'", r, ' ', i->type, i->name);
+		debug_expr(i->expr, r + 2);
+	}
+	break;
+	case BRANCH_TYPE_C:
+	{
+		info_for *i = br.ptr;
+		switch(br.flags & BRANCH_CTYPE_MASK) {
+		case BRANCH_CTYPE_WHILE: debug("%*cWHILE", r, ' '); break;
+		case BRANCH_CTYPE_IF:    debug("%*cIF"   , r, ' '); break;
+		case BRANCH_CTYPE_ELSE:  debug("%*cELSE" , r, ' '); return;
+		case BRANCH_CTYPE_RET:   debug("%*cRET"  , r, ' '); break;
+		case BRANCH_CTYPE_FOR:
+			debug("%*cFOR   '%s' '%s'", r, ' ', i->var, i->action);
+			debug_expr(i->expr, r + 2);
+			return;
+		default:
+			debug("Invalid control type flag 0x%x", br.flags);
+			exit(1);
+		}
+		debug_expr(*br.expr, r + 2);
+	}
+	break;
+	default:
+	{
+		debug("Invalid type flag 0x%x", br.flags);
+		exit(1);
+	}
+	}
+}
+
+// ====
+
 static int parse(char **pptr, branch *root);
+
+// ====
 
 static int is_type_name(const char *str)
 {
@@ -61,6 +124,7 @@ static int is_type_name(const char *str)
 	}
 	return 0;
 }
+
 
 static int is_control_word(const char *str, char **pptr, branch *br)
 {
@@ -80,11 +144,10 @@ static int is_control_word(const char *str, char **pptr, branch *br)
 				ptr++;
 			ptr++;
 			SKIP_WHITE(ptr);
-			br->ptr = ptr;
-			while (*ptr != ')')
-				ptr++;
-			*ptr = 0;
-			*pptr = ptr + 1;
+			br->expr = malloc(sizeof(*br->expr));
+			if (expr_parse(&ptr, br->expr) < 0)
+				return -1;
+			*pptr = ptr;
 			br->flags |= BRANCH_TYPE_C;
 			return 1;
 		}
@@ -95,17 +158,18 @@ static int is_control_word(const char *str, char **pptr, branch *br)
 			ptr++;
 		ptr++;
 		SKIP_WHITE(ptr);
-		f->it_var = ptr;
+		f->var = ptr;
 		while (*ptr != ';')
 			ptr++;
 		*(ptr++) = 0;
 		SKIP_WHITE(ptr);
-		f->it_expr = ptr;
+		if (expr_parse(&ptr, &f->expr))
+			return -1;
 		while (*ptr != ';')
 			ptr++;
 		*(ptr++) = 0;
 		SKIP_WHITE(ptr);
-		f->it_action = ptr;
+		f->action = ptr;
 		while (*ptr != ')')
 			ptr++;
 		*ptr = 0;
@@ -115,12 +179,13 @@ static int is_control_word(const char *str, char **pptr, branch *br)
 	}
 	if (strcmp(str, "return") == 0) {
 		SKIP_WHITE(ptr);
-		br->ptr = ptr;
 		while (*ptr != ';')
 			ptr++;
-		*ptr = 0;
+		*ptr = ')';
+		br->expr = malloc(sizeof(*br->expr));
+		if (expr_parse(pptr, br->expr))
+			return -1;
 		br->flags |= BRANCH_TYPE_C | BRANCH_CTYPE_RET;
-		*pptr = ptr + 1;
 		return 1;
 	}
 	if (strcmp(str, "else") == 0) {
@@ -131,6 +196,7 @@ static int is_control_word(const char *str, char **pptr, branch *br)
 	}
 	return 0;
 }
+
 
 static int new_root(char **pptr, branch *root) {
 	char *ptr = *pptr;
@@ -166,6 +232,7 @@ done:
 	((branch *)root->ptr)[root->len++] = br;
 	return 0;
 }
+
 
 static int parse(char **pptr, branch *root)
 {
@@ -229,17 +296,38 @@ static int parse(char **pptr, branch *root)
 		info_var *f = br.ptr = malloc(sizeof(info_var));
 		f->type = type;
 		f->name = name;
+		f->expr.flags = 0;
 		if (IS_OPERATOR(c)) {
-			if (c != '=')
+			orgptr = ptr;
+			int count = 0;
+			while (*ptr != ';') {
+				if (*ptr == '(')
+					count++;
+				else if (*ptr == ')')
+					count--;
+				if (count < 0) {
+					fprintf(stderr, "Unexpected ')': '%s'\n", orgptr);
+					return -1;
+				}
 				ptr++;
-			SKIP_WHITE(ptr);
-			f->value = ptr;
-			while (*ptr != ';')
-				ptr++;
-			*ptr = 0;
+			}
+			if (count > 0) {
+				fprintf(stderr, "Missing ')': '%s'\n", orgptr);
+				return -1;
+			}
+			*(ptr++) = ')'; // ')' indicates the end of an expression
 			if (c != '=') {
-				char *tmp = malloc(0xFFFF);
-				f->value = realloc(tmp, sprintf(tmp, "%s%c(%s)", f->name, c, f->value) + 1);
+				orgptr += 2;
+				SKIP_WHITE(orgptr);
+				char buf[0x10000], *d = buf;
+				*(ptr-1) = 0;
+				sprintf(buf, "%s%c(%s))", f->name, c, orgptr);
+				d = buf;
+				if (expr_parse(&d, &f->expr) < 0)
+					return -1;
+			} else {
+				if (expr_parse(&orgptr, &f->expr) < 0)
+					return -1;
 			}
 		}
 		br.flags |= BRANCH_TYPE_VAR;
@@ -259,6 +347,7 @@ done:
 	*pptr = ptr + 1; // Skip ';'
 	return 1;
 }
+
 
 int code_branch()
 {
@@ -281,5 +370,6 @@ int code_branch()
 	done:
 		br.ptr = realloc(br.ptr, br.len * sizeof(branch));
 		global_func_branches[i] = br;
+		debug("");
 	}
 }

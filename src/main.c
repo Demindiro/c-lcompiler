@@ -5,7 +5,7 @@
 #include <string.h>
 #include "code/read.h"
 #include "code/branch.h"
-#include "asm/main.h"
+#include "asm/gen.h"
 #include "util.h"
 
 int main(int argc, char **argv)

@@ -1,6 +1,8 @@
 #ifndef BRANCH_H
 #define BRANCH_H
 
+#include "expr.h"
+
 #define BRANCH_MASK        0xF
 #define BRANCH_ISLEAF      0x1
 #define BRANCH_HASCTRLEXPR 0x2
@@ -19,7 +21,12 @@
 typedef struct branch {
 	int flags;
 	int len;
-	void *ptr;
+	union {
+		void *ptr;
+		char *str;
+		struct branch *br;
+		struct expr_branch *expr;
+	};
 } branch;
 
 #endif

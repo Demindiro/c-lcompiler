@@ -1,10 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../table.h"
-#include "../code/read.h"
-#include "../code/branch.h"
-#include "../util.h"
+#include "../../table.h"
+#include "../../code/read.h"
+#include "../../code/branch.h"
+#include "../../util.h"
 
 typedef struct arg {
 	char *type;
@@ -23,15 +23,14 @@ const char *var_types[] = {
 	"void",
 };
 
+// Anybody has a good reference to general conventions of using the x86 registers? (like RISC-V has)
 const char *arg_regs[] = {
-	"$a0", "$a1", "$a2", "$a3",
-	"$a4", "$a5", "$a6", "$a7",
+	"rax", "rbx", "rcx", "rdx",
 };
 
 const char *temp_regs[] = {
-	"$t0", "$t1", "$t2", "$t3",
-	"$t4", "$t5", "$t6", "$t7",
-	"$t8", "$t9",
+	"r8" , "r9" , "r10", "r11",
+	"r12", "r13", "r14", "r15",
 };
 unsigned int temp_regs_taken;
 
@@ -71,103 +70,108 @@ static size_t is_var_type(char *str)
 	return -1;
 }
 
-static int eval_expr(char *ptr, const char *dest_reg, table *tbl)
+static char *get_op(int flags)
 {
-	if (ptr == NULL)
-		return 0;
-	char buf[0xFFFF];
-	SKIP_WHITE(ptr);
-	char *orgptr = ptr;
-	// TODO
-	// 0: *,/,% 
-	// 1: &&, ||
-	// 2,~
-	// 3: <,>,<=,>=,==,!=
-	// 4: +,- : 0
-	int rang = 0; 
-	const char *op, *rd, *rs1, *rs2;
-	rd = dest_reg;
-	rs1 = "RS1_UNDEF";
-	rs2 = "RS2_UNDEF";
-	char *tmp;
-	char *d = buf;
-	while (IS_VAR_CHAR(*ptr))
-		*(d++) = *(ptr++);
-	*d = 0;
-	if ('0' <= buf[0] && buf[0] <= '9') {
-		printf("\tli\t%s,%s\n", rd, buf);
-	} else {
-		arg a;
-		// The compiler seems to be doing something weird when passing &buf directly (ignoring &)?
-		char *b = buf;
-		if (table_get(tbl, &b, &a) < 0) {
-			fprintf(stderr, "Undefined symbol: %s\n", buf);
-			return -1;
-		}
-		rs1 = a.reg;
-		printf("\tmv\t%s,%s\n", rd, rs1);
+	switch (flags & EXPR_OP_MASK) {
+	case 0:             return "\tmov\trax,%s\n";
+	case EXPR_OP_A_ADD: return "\tadd\trax,%s\n";
+	case EXPR_OP_A_SUB: return "\tsub\trax,%s\n";
+	case EXPR_OP_A_MUL: return "\tmul\t%s\n";
+	case EXPR_OP_A_DIV: return "\tdiv\t%s\n";
+	case EXPR_OP_A_REM: return "\tdiv\t%s\n";
+	case EXPR_OP_C_GRT:
+	case EXPR_OP_C_LST:
+	case EXPR_OP_C_GET: return "\tcmp\t%s,rax\n"; break;
+	case EXPR_OP_C_LET: return "\tcmp\trax,%s\n"; break;
+	default: fprintf(stderr, "Invalid expression operator flags! 0x%x (This is a bug)\n", flags); return NULL;
 	}
-	rs1 = rd;
-	SKIP_WHITE(ptr);
-	if (*ptr == 0)
-		return 0;
-	while (1) {
-		int swap_regs = 0;
-		switch (*ptr) {
-		case '(': eval_expr(ptr, "RD", tbl); break;
-		case ')': return 0;
-		case '+': op = "add"; break;
-		case '-': op = "sub"; break;
-		case '*': op = "mul"; break;
-		case '/': op = "div"; break;
-		case '%': op = "rem"; break;
-		case '!':
-			if (*(ptr+1) == '=') {
-				op = "????";
-				ptr++;
-			} else {
-				op = "snez";
-			}
-			break;
-		case '=':
-			if (*(++ptr) == '=') {
-				op = "seqz";
-			} else {
-				fprintf(stderr, "Assignment inside expression is not supported\n");
-				return -1;
-			}
-			break;
-		case '>': swap_regs = 1;
-		case '<': op = "slt"; break;
-		default: fprintf(stderr, "Invalid sequence: '%s'\n", orgptr); return -1;
-		}
-		while (!IS_VAR_CHAR(*ptr))
-			*(d++) = *(ptr++);
-		SKIP_WHITE(ptr);
-		d = buf;
-		while (IS_VAR_CHAR(*ptr))
-			*(d++) = *(ptr++);
-		*d = 0;
-		if ('0' <= buf[0] && buf[0] <= '9') {
-			rs2 = get_temp_reg();
-			printf("\tli\t%s,%s\n", rs2, buf);
-		} else {
+}
+
+
+static int _eval_expr(expr_branch root, table *tbl)
+{
+	const char *op = get_op(root.flags), *ar;
+	if (op == NULL)
+		return -1;
+	if (root.flags & EXPR_ISLEAF) {
+		if (root.flags & EXPR_ISNUM) {
+			ar = root.val;
+		} else { 
 			arg a;
-			char *b = buf;
-			if (table_get(tbl, &b, &a) < 0) {
-				printf("Undefined symbol: '%s'\n", buf);
+			if (table_get(tbl, &root.val, &a) < 0) {
+				fprintf(stderr, "Undefined symbol: %s\n", root.val);
 				return -1;
 			}
-			rs2 = a.reg;
+			ar = a.reg;
 		}
-		if (swap_regs)
-			SWAP(const char *, rs1, rs2);
-		printf("\t%s\t%s,%s,%s\n", op, rd, rs1, rs2);
-		SKIP_WHITE(ptr);
-		if (*ptr == 0)
-			return 0;
-		if (swap_regs)
-			SWAP(const char *, rs1, rs2);
+		printf(op, ar);
+	} else {
+		const char *treg = get_temp_reg();
+		printf("\tmov\t%s,rax\n", treg);
+		for (size_t i = 0; i < root.len; i++) {
+			if (_eval_expr(root.branches[i], tbl) < 0)
+				return -1;
+		}
+		if (root.flags & EXPR_OP_MASK != 0)
+			printf(op, treg);
+		free_temp_reg(treg);
+	}
+	return 0;
+}
+
+
+static int eval_expr(expr_branch root, const char *dreg, table *tbl)
+{
+	if (strcmp(dreg, "rax") != 0)
+		printf("\tpush\trax\n");
+	int r = _eval_expr(root, tbl);
+	if (r < 0)
+		return r;
+	if (strcmp(dreg, "rax") != 0) {
+		printf("\tmov\t%s,rax\n"
+		       "\tpop\trax\n", dreg);
+	}
+	return r;
+}
+
+
+static int print_jump_op(const char *lbl, int flags)
+{
+	const char *op;
+	switch(flags & EXPR_OP_MASK) {
+		case EXPR_OP_C_GRT: op = "jg" ; break;
+		case EXPR_OP_C_LST: op = "jl" ; break;
+		case EXPR_OP_C_GET: op = "jge"; break;
+		case EXPR_OP_C_LET: op = "jle"; break;
+		default: fprintf(stderr, "print_jump_op\n"); exit(1); break;
+	}
+	printf("\t%s\t%s\n", op, lbl);
+	return 0;
+}
+
+static int parse_if_expr(const char *lbl, expr_branch br, table *tbl)
+{
+	while (!(br.flags & EXPR_ISLEAF) && br.len == 1)
+		br = br.branches[br.len - 1];
+	if (br.flags & EXPR_ISLEAF) {
+
+	} else if (br.len == 2) {
+		expr_branch e0 = br.branches[0];
+		expr_branch e1 = br.branches[1];
+		int e1f = e1.flags;
+		e1.flags &= ~EXPR_OP_MASK;
+		const char *tr0 = get_temp_reg();
+		eval_expr(e0, tr0, tbl);
+		const char *tr1 = get_temp_reg();
+		eval_expr(e1, tr1, tbl);
+		printf("\tcmp\t%s,%s\n", tr0, tr1);
+		free_temp_reg(tr0);
+		free_temp_reg(tr1);
+		if (print_jump_op(lbl, e1f) < 0)
+			return -1;
+	} else {
+		debug("TODO (parse_if_expr)");
+		exit(1);
 	}
 }
 
@@ -180,23 +184,20 @@ static int parse_control_word(branch *brs, size_t *index, table *tbl)
 			brelse = NULL;
 		char buf[16], buf2[16], *lbl = buf;
 		get_label(buf, brelse == NULL ? "end" : "else");
-		const char *r = get_temp_reg();
-		eval_expr(br.ptr, r, tbl);
-		printf("\tbeqz\t%s,%s\n", r, lbl);
+		parse_if_expr(lbl, *br.expr, tbl);
 		(*index)++;
 		parse(brs, index, tbl);
 		if (brelse != NULL) {
 			get_label(buf2, "end");
-			printf("\tj %s\n", buf2);
+			printf("\tjmp %s\n", buf2);
 			printf("%s:\n", lbl);
 			lbl = buf2;
 			(*index) += 2;
 			parse(brs, index, tbl);
 		}
 		printf("%s:\n", lbl);
-		free_temp_reg(r);
 	} else if (br.flags & BRANCH_CTYPE_RET) {
-		eval_expr(br.ptr, "$v0", tbl);
+		eval_expr(*br.expr, "rax", tbl);
 		printf("\tret\n");
 	} else if (br.flags & BRANCH_CTYPE_ELSE) {
 		fprintf(stderr, "'ELSE' without 'IF' (should have been caught earlier, please file a bug report)\n");
@@ -223,7 +224,7 @@ static int parse_var(branch br, table *tbl)
 		fprintf(stderr, "Undefined symbol: '%s'\n", inf->name);
 		return -1;
 	}
-	return eval_expr(inf->value, a.reg, tbl);
+	return eval_expr(inf->expr, a.reg, tbl);
 }
 
 static int parse(branch *brs, size_t *index, table *tbl)
@@ -246,17 +247,18 @@ static int parse(branch *brs, size_t *index, table *tbl)
 
 static int convert_var(info_var *inf)
 {
-	printf("%s:\n", inf->name);
+	printf("%s:\t", inf->name);
 	if (strcmp(inf->type, "string") == 0) {
-		printf(".string\t\"%s\"\n", inf->value);
+		printf("db\t\"%s\"\n", "TODO");
+		printf("%s_len:\t equ $ - %s\n", inf->name, inf->name);
 	} else if (strcmp(inf->type, "sbyte" ) == 0) {
-		printf(".byte\t%s\n", inf->value);
+		printf("db\t%s\n", "TODO");
 	} else if (strcmp(inf->type, "sshort") == 0) {
-		printf(".half\t%s\n", inf->value);
+		printf("dw\t%s\n", "TODO");
 	} else if (strcmp(inf->type, "sint"  ) == 0) {
-		printf(".word\t%s\n", inf->value);
+		printf("dd\t%s\n", "TODO");
 	} else if (strcmp(inf->type, "slong" ) == 0) {
-		printf(".dword\t%s\n", inf->value);
+		printf("dq\t%s\n", "TODO");
 	} else {
 		printf("Unknown type: %s\n", inf->type);
 		return -1;
@@ -300,12 +302,19 @@ static int convert_func(info_func *inf, branch root)
 int asm_gen()
 {
 	int r = 0;
-	printf("section data\n");
+	printf("SECTION .data\n");
 	for (size_t i = 0; i < global_vars_count; i++) {
 		if (convert_var(&global_vars[i]) < 0)
 			goto error;	
 	}
-	printf("section text\n");
+	printf("SECTION .text\n"
+	       "global _start\n"
+	       "_start:\n"
+	       "\tcall\tmain\n"
+	       "\tmov\tebx,eax\n"
+	       "\tmov\teax,1\n"
+	       "\tint\t0x80\n"
+	       "\n");
 	for (size_t i = 0; i < global_funcs_count; i++) {
 		if (convert_func(&global_funcs[i], global_func_branches[i]) < 0)
 			goto error;

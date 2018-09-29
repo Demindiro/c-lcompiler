@@ -2,6 +2,7 @@
 #define INFO_H
 
 #include <stddef.h>
+#include "expr.h"
 
 #define INFO_VAR  1
 #define INFO_FUNC 2
@@ -18,7 +19,7 @@ typedef struct info {
 typedef struct info_var {
 	char *type;
 	char *name;
-	char *value;
+	expr_branch expr;
 } info_var;
 
 typedef struct info_func {
@@ -30,21 +31,10 @@ typedef struct info_func {
 	char *body;
 } info_func;
 
-/*
-typedef struct info_cond {
-	char *type;
-	char *name;
-	char *cond;
-} info_cond;
-*/
-
 typedef struct info_for {
-	//char *type;
-	//char *name;
-	//char *cond;
-	char *it_var;
-	char *it_expr;
-	char *it_action;
+	char *var;
+	char *action;
+	expr_branch expr;
 } info_for;
 
 #endif

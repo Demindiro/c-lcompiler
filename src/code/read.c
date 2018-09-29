@@ -14,7 +14,7 @@ static int parse_var(char **pptr, info *inf)
 {
 	info_var *iv = (info_var *)inf;
 	char *ptr = *pptr;
-	iv->value = ptr;
+	iv->expr /* TODO */;
 	while (!WHITE(*ptr) && *ptr != ';')
 		ptr++;
 	char c = *ptr;
@@ -146,7 +146,7 @@ done:
 	debug("GLOBAL VARIABLES: %lu", global_vars_count);
 	for (size_t i = 0; i < global_vars_count; i++) {
 		info_var *iv = &global_vars[i];
-		debug("  name: '%s',  type: '%s',  value: '%s'", iv->name, iv->type, iv->value);
+		debug("  name: '%s',  type: '%s'", iv->name, iv->type); // TODO
 	}
 	debug("GLOBAL FUNCTIONS: %lu", global_funcs_count);
 	for (size_t i = 0; i < global_funcs_count; i++) {
