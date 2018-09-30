@@ -94,7 +94,9 @@ int code_parse(char **pptr, char *end, info *inf)
 {
 	char *ptr = *pptr, *orgptr;
 	size_t len;
+	
 	SKIP_WHITE(ptr);
+	
 	if (*ptr == 0)
 		return 0;
 
@@ -122,10 +124,10 @@ int code_parse(char **pptr, char *end, info *inf)
 	int t;
 	if (c == '=') {
 		parse_var (&ptr, inf);
-		t = INFO_VAR;
+		t = 1;
 	} else {
 		parse_func(&ptr, inf);
-		t = INFO_FUNC;
+		t = 2;
 	}
 	*pptr = ptr;
 	return t;
@@ -143,12 +145,12 @@ int code_read(char *file)
 		switch (code_parse(&ptr, buf + len, &inf)) {
 		case 0:
 			goto done;
-		case INFO_VAR:
+		case 1:
 			if (global_vars_size == global_vars_count)
 				global_vars = realloc(global_vars, (global_vars_size + 10) * 3 / 2 * sizeof(info_var));
 			memcpy(&global_vars[global_vars_count++], &inf, sizeof(info_var));
 			break;
-		case INFO_FUNC:
+		case 2:
 			if (global_funcs_size == global_funcs_count)
 				global_funcs = realloc(global_funcs, (global_funcs_size + 10) * 3 / 2 * sizeof(info_func));
 			memcpy(&global_funcs[global_funcs_count++], &inf, sizeof(info_func));
@@ -169,6 +171,5 @@ done:
 			debug("    name: '%s', type: '%s'", iv->arg_names[i], iv->arg_types[i]);
 		debug("'''%s'''", iv->body);
 	}
-	memset(buf, 0, sizeof(buf));
 	return 0;
 }

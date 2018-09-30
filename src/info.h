@@ -4,10 +4,6 @@
 #include <stddef.h>
 #include "expr.h"
 
-#define INFO_VAR  1
-#define INFO_FUNC 2
-#define INFO_COND 3
-#define INFO_FOR  4
 
 // Currently only a placeholder for buffers
 // Should be deprecated and removed sometime
