@@ -187,6 +187,7 @@ static int parse_if_expr(const char *lbl, expr_branch br, table *tbl)
 		debug("TODO (parse_if_expr)");
 		exit(1);
 	}
+	return 0;
 }
 
 static int parse_control_word(branch *brs, size_t *index, table *tbl)
@@ -257,6 +258,7 @@ static int parse(branch *brs, size_t *index, table *tbl)
 				return -1;
 		}
 	}
+	return 0;
 }
 
 static int convert_var(info_var *inf)
@@ -278,6 +280,7 @@ static int convert_var(info_var *inf)
 		return -1;
 	}
 	printf("\n");
+	return 0;
 }
 
 static int cmp_keys(const void *a, const void *b)
@@ -311,6 +314,8 @@ static int convert_func(info_func *inf, branch root)
 			return -1;
 	}
 	printf("\n");
+	table_free(&tbl);
+	return 0;
 }
 
 int asm_gen()
@@ -319,7 +324,7 @@ int asm_gen()
 	printf("SECTION .data\n");
 	for (size_t i = 0; i < global_vars_count; i++) {
 		if (convert_var(&global_vars[i]) < 0)
-			goto error;	
+			return -1;	
 	}
 	printf("SECTION .text\n"
 	       "global _start\n"
@@ -331,9 +336,7 @@ int asm_gen()
 	       "\n");
 	for (size_t i = 0; i < global_funcs_count; i++) {
 		if (convert_func(&global_funcs[i], global_func_branches[i]) < 0)
-			goto error;
+			return -1;
 	}
-error:
-	r = -1;
-	return r;
+	return 0;
 }
