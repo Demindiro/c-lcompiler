@@ -1,5 +1,6 @@
 #include "optimize.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include "read.h"
 #include "branch.h"
 #include "../expr.h"
@@ -8,7 +9,9 @@
 static int _optimize_expr(expr_branch *root)
 {
 	if (root->len == 1) {
+		void *tmp = root->branches;
 		*root = root->branches[0];
+		free(tmp);
 	} else {
 		for (size_t i = 0; i < root->len; i++) {
 			expr_branch *br = &root->branches[i];
@@ -46,7 +49,9 @@ static int optimize_branch(branch *root)
 		return 0; // Removing the function may break other functions,
 		          // so just don't do anyhting
 	} else if (root->len == 1) {
+		void *tmp = root->branches;
 		*root = root->branches[0];
+		free(tmp);
 		if (optimize_expr(root) < 0)
 			return -1;
 	} else {
