@@ -50,6 +50,8 @@ typedef struct expr_branch {
 
 int expr_parse(char **pptr, expr_branch *root);
 
+const char *debug_expr_op_to_str(int flags);
+
 #ifndef NDEBUG
 void debug_expr(expr_branch br, int lvl);
 #else

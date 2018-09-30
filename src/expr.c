@@ -6,9 +6,7 @@
 #include "branch.h"
 
 
-#ifndef NDEBUG
-
-static const char *expr_op_to_str(int flags)
+const char *debug_expr_op_to_str(int flags)
 {       
         switch (flags & EXPR_OP_MASK) {
         case 0:              return "none";
@@ -42,16 +40,18 @@ static const char *expr_op_to_str(int flags)
         exit(1);
 }
 
+#ifndef NDEBUG
+
 void debug_expr(expr_branch br, int lvl)
 {
-        if (br.flags & EXPR_ISLEAF) {
-                debug("%*cOP '%s', VAL '%s' (%s)",
-                      lvl, ' ', expr_op_to_str(br.flags), br.val, (br.flags & EXPR_ISNUM) ? "num" : "var");
-        } else {
-                debug("%*cEXPR '%s'", lvl, ' ', expr_op_to_str(br.flags));
-                for (size_t i = 0; i < br.len; i++)
-                        debug_expr(br.branches[i], lvl + 2);
-        }
+	if (br.flags & EXPR_ISLEAF) {
+	        debug("%*cOP '%s', VAL '%s' (%s)",
+	              lvl, ' ', debug_expr_op_to_str(br.flags), br.val, (br.flags & EXPR_ISNUM) ? "num" : "var");
+	} else {
+	        debug("%*cEXPR '%s'", lvl, ' ', debug_expr_op_to_str(br.flags));
+	        for (size_t i = 0; i < br.len; i++)
+	                debug_expr(br.branches[i], lvl + 2);
+	}
 }
 
 #endif

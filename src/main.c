@@ -27,4 +27,5 @@ int main(int argc, char **argv)
 	debug("\n===    ASM GEN    ===\n");
 	if (asm_gen() < 0)
 		return 1;
+	return 0;
 }
