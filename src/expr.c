@@ -214,6 +214,8 @@ static int _expr_parse(char **pptr, expr_branch *root)
 		}
 		root->branches[root->len++] = br;
 	}
+	root->branches = realloc(root->branches, root->len * sizeof(char *));
+	return 0;
 }
 
 int expr_parse(char **pptr, expr_branch *root)

@@ -6,16 +6,17 @@
 #include <string.h>
 #include "../info.h"
 #include "../util.h"
-
-#define WHITE(x) (x == ' ' || x == '\t')
+#include "../expr.h"
 
 
 static int parse_var(char **pptr, info *inf)
 {
 	info_var *iv = (info_var *)inf;
-	char *ptr = *pptr;
-	iv->expr /* TODO */;
-	while (!WHITE(*ptr) && *ptr != ';')
+	char *ptr = *pptr, *orgptr = ptr;
+	SKIP_WHITE(ptr);
+	fprintf(stderr, "TODO (parse_var)\n");
+	return -1;
+	while (!IS_WHITE(*ptr) && *ptr != ';')
 		ptr++;
 	char c = *ptr;
 	*(ptr++) = 0;
@@ -30,44 +31,46 @@ static int parse_var(char **pptr, info *inf)
 
 static int parse_func(char **pptr, info *inf)
 {
-	// no 'if' because, well...
 	info_func *iv = (info_func *)inf;
-	char *ptr = *pptr;
-	size_t i;
-	for (i = 0; i < sizeof(iv->arg_types); i++) {
+	char *ptr = *pptr, *orgptr;
+	size_t i, len;
+	for (i = 0; i < sizeof(iv->arg_types) / sizeof(*iv->arg_types); i++) {
 		SKIP_WHITE(ptr);
-		iv->arg_types[i] = ptr;
-		while (!WHITE(*ptr) && *ptr != ')')
+		orgptr = ptr;
+		while (!IS_WHITE(*ptr) && *ptr != ')')
 			ptr++;
 		if (*ptr == ')') {
 			i--;
 			ptr++;
-			goto done;
+			break;
 		}
-		*(ptr++) = 0;
-		while (WHITE(*ptr))
+		len = ptr - orgptr;
+		iv->arg_types[i] = malloc(len + 1);
+		memcpy(iv->arg_types[i], orgptr, len);
+		iv->arg_types[i][len] = 0;
+
+		SKIP_WHITE(ptr);
+
+		orgptr = ptr;
+		while (!IS_WHITE(*ptr) && *ptr != ',' && *ptr != ')')
 			ptr++;
-		iv->arg_names[i] = ptr;
-		while (!WHITE(*ptr) && *ptr != ',' && *ptr != ')')
-			ptr++;
-		char c = *ptr;
-		*(ptr++) = 0;
-		if (c == ')')
-			goto done;
-		if (c == ',')
+		len = ptr - orgptr;
+		iv->arg_names[i] = malloc(len + 1);
+		memcpy(iv->arg_names[i], orgptr, len);
+		iv->arg_names[i][len] = 0;
+		
+		SKIP_WHITE(ptr);
+
+		if (*ptr == ')')
+			break;
+		if (*(ptr++) == ',')
 			continue;
-		while (*ptr != ',') {
-			if (*ptr == ')') {
-				*(ptr++) = 0;
-				goto done;
-			}
-		}
 	}
-done:
 	iv->arg_count = i + 1;
 	while (*ptr != '{')
 		ptr++;
-	iv->body = ++ptr;
+	ptr++;
+	orgptr = ptr;
 	int c = 0;
 	while (1) {
 		if (*ptr == '}')
@@ -78,7 +81,10 @@ done:
 			break;
 		ptr++;
 	}
-	*ptr = 0;
+	len = ptr - orgptr;
+	iv->body = malloc(len + 1);
+	memcpy(iv->body, orgptr, len);
+	iv->body[len] = 0;
 	*pptr = ptr + 1;
 	return 0;
 }
@@ -86,33 +92,42 @@ done:
 
 int code_parse(char **pptr, char *end, info *inf)
 {
-	SKIP_WHITE(*pptr);
-	if (**pptr == 0)
+	char *ptr = *pptr, *orgptr;
+	size_t len;
+	
+	SKIP_WHITE(ptr);
+	
+	if (*ptr == 0)
 		return 0;
-	char *ptr = *pptr;
-	inf->type = ptr;
-	while (!WHITE(*ptr))
+
+	orgptr = ptr;
+	while (!IS_WHITE(*ptr))
 		ptr++;
-	*(ptr++) = 0;
-	inf->name = ptr;
-	while (!WHITE(*ptr) && *ptr != '(' && *ptr != '=')
+	len = ptr - orgptr;
+	inf->type = malloc(len + 1);
+	memcpy(inf->type, orgptr, len);
+	inf->type[len] = 0;
+	
+	SKIP_WHITE(ptr);
+	
+	orgptr = ptr;
+	while (!IS_WHITE(*ptr) && *ptr != '(' && *ptr != '=')
 		ptr++;
-	if (WHITE(*ptr)) {
-		*(ptr++) = 0;
-		while (WHITE(*ptr))
-			ptr++;
-	}
-	char c = *ptr;
-	*(ptr++) = 0;
-	while (WHITE(*ptr))
-		ptr++;
+	len = ptr - orgptr,
+	inf->name = malloc(len + 1);
+	memcpy(inf->name, orgptr, len);
+	inf->name[len] = 0;
+	
+	SKIP_WHITE(ptr);
+	
+	char c = *(ptr++);
 	int t;
 	if (c == '=') {
 		parse_var (&ptr, inf);
-		t = INFO_VAR;
+		t = 1;
 	} else {
 		parse_func(&ptr, inf);
-		t = INFO_FUNC;
+		t = 2;
 	}
 	*pptr = ptr;
 	return t;
@@ -130,12 +145,12 @@ int code_read(char *file)
 		switch (code_parse(&ptr, buf + len, &inf)) {
 		case 0:
 			goto done;
-		case INFO_VAR:
+		case 1:
 			if (global_vars_size == global_vars_count)
 				global_vars = realloc(global_vars, (global_vars_size + 10) * 3 / 2 * sizeof(info_var));
 			memcpy(&global_vars[global_vars_count++], &inf, sizeof(info_var));
 			break;
-		case INFO_FUNC:
+		case 2:
 			if (global_funcs_size == global_funcs_count)
 				global_funcs = realloc(global_funcs, (global_funcs_size + 10) * 3 / 2 * sizeof(info_func));
 			memcpy(&global_funcs[global_funcs_count++], &inf, sizeof(info_func));

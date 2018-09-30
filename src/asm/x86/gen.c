@@ -88,23 +88,31 @@ static char *get_op(int flags)
 }
 
 
+static const char *get_val_or_reg(expr_branch root, table *tbl)
+{
+	if (root.flags & EXPR_ISNUM) {
+		return root.val;
+	} else { 
+		arg a;
+		if (table_get(tbl, &root.val, &a) < 0) {
+			fprintf(stderr, "Undefined symbol: %s\n", root.val);
+			return NULL;
+		}
+		return a.reg;
+	}
+}
+
+
 static int _eval_expr(expr_branch root, table *tbl)
 {
 	const char *op = get_op(root.flags), *ar;
 	if (op == NULL)
 		return -1;
 	if (root.flags & EXPR_ISLEAF) {
-		if (root.flags & EXPR_ISNUM) {
-			ar = root.val;
-		} else { 
-			arg a;
-			if (table_get(tbl, &root.val, &a) < 0) {
-				fprintf(stderr, "Undefined symbol: %s\n", root.val);
-				return -1;
-			}
-			ar = a.reg;
-		}
-		printf(op, ar);
+		const char *arg = get_val_or_reg(root, tbl);
+		if (arg == NULL)
+			return -1;
+		printf(op, arg);
 	} else {
 		const char *treg = get_temp_reg();
 		printf("\tmov\t%s,rax\n", treg);
@@ -122,16 +130,22 @@ static int _eval_expr(expr_branch root, table *tbl)
 
 static int eval_expr(expr_branch root, const char *dreg, table *tbl)
 {
-	if (strcmp(dreg, "rax") != 0)
-		printf("\tpush\trax\n");
-	int r = _eval_expr(root, tbl);
-	if (r < 0)
-		return r;
-	if (strcmp(dreg, "rax") != 0) {
-		printf("\tmov\t%s,rax\n"
-		       "\tpop\trax\n", dreg);
+	if (root.flags & EXPR_ISLEAF) {
+		const char *arg = get_val_or_reg(root, tbl);
+		if (arg == NULL)
+			return -1;
+		printf("\tmov\t%s,%s\n", dreg, arg);
+	} else {
+		if (strcmp(dreg, "rax") != 0)
+			printf("\tpush\trax\n");
+		if (_eval_expr(root, tbl) < 0)
+			return -1;
+		if (strcmp(dreg, "rax") != 0) {
+			printf("\tmov\t%s,rax\n"
+			       "\tpop\trax\n", dreg);
+		}
 	}
-	return r;
+	return 0;
 }
 
 
@@ -173,6 +187,7 @@ static int parse_if_expr(const char *lbl, expr_branch br, table *tbl)
 		debug("TODO (parse_if_expr)");
 		exit(1);
 	}
+	return 0;
 }
 
 static int parse_control_word(branch *brs, size_t *index, table *tbl)
@@ -243,6 +258,7 @@ static int parse(branch *brs, size_t *index, table *tbl)
 				return -1;
 		}
 	}
+	return 0;
 }
 
 static int convert_var(info_var *inf)
@@ -264,6 +280,7 @@ static int convert_var(info_var *inf)
 		return -1;
 	}
 	printf("\n");
+	return 0;
 }
 
 static int cmp_keys(const void *a, const void *b)
@@ -297,6 +314,8 @@ static int convert_func(info_func *inf, branch root)
 			return -1;
 	}
 	printf("\n");
+	table_free(&tbl);
+	return 0;
 }
 
 int asm_gen()
@@ -305,7 +324,7 @@ int asm_gen()
 	printf("SECTION .data\n");
 	for (size_t i = 0; i < global_vars_count; i++) {
 		if (convert_var(&global_vars[i]) < 0)
-			goto error;	
+			return -1;	
 	}
 	printf("SECTION .text\n"
 	       "global _start\n"
@@ -317,9 +336,7 @@ int asm_gen()
 	       "\n");
 	for (size_t i = 0; i < global_funcs_count; i++) {
 		if (convert_func(&global_funcs[i], global_func_branches[i]) < 0)
-			goto error;
+			return -1;
 	}
-error:
-	r = -1;
-	return r;
+	return 0;
 }
