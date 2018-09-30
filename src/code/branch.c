@@ -163,9 +163,9 @@ static int parse(char **pptr, branch *root)
 		return 1;
 	} 	
 	char *orgptr = ptr;
-	while (!IS_WHITE(ptr) && *ptr != ';' && !IS_OPERATOR(*ptr) && *ptr != '(')
+	while (!IS_WHITE(*ptr) && *ptr != ';' && !IS_OPERATOR(*ptr) && *ptr != '(')
 		ptr++;
-	if (!IS_WHITE(ptr)) {
+	if (!IS_WHITE(*ptr)) {
 		c = *ptr;
 		*(ptr++) = 0;
 	} else {
@@ -181,9 +181,9 @@ static int parse(char **pptr, branch *root)
 			return -1;
 		}
 		ptr++;
-		while (!IS_WHITE(ptr) && *ptr != ';' && *ptr != '=')
+		while (!IS_WHITE(*ptr) && *ptr != ';' && *ptr != '=')
 			ptr++;
-		if (!IS_WHITE(ptr)) {
+		if (!IS_WHITE(*ptr)) {
 			c = *ptr;
 			*(ptr++) = 0;
 		} else {
