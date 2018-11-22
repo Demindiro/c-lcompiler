@@ -1,10 +1,10 @@
-#include "optimize.h"
+#include "code/optimize.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include "read.h"
-#include "branch.h"
-#include "../expr.h"
-#include "../util.h"
+#include "code/read.h"
+#include "code/branch.h"
+#include "expr.h"
+#include "util.h"
 
 static int _optimize_expr(expr_branch *root)
 {

@@ -2,10 +2,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "read.h"
-#include "../util.h"
-#include "../branch.h"
-#include "../expr.h"
+#include "code/read.h"
+#include "util.h"
+#include "branch.h"
+#include "expr.h"
 
 
 static const char *var_types[] = {

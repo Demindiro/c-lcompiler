@@ -1,12 +1,12 @@
-#include "read.h"
+#include "code/read.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
-#include "../info.h"
-#include "../util.h"
-#include "../expr.h"
+#include "info.h"
+#include "util.h"
+#include "expr.h"
 
 
 static int parse_var(char **pptr, info *inf)

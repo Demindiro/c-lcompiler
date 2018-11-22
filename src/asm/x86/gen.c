@@ -1,11 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../../expr.h"
-#include "../../table.h"
-#include "../../code/read.h"
-#include "../../code/branch.h"
-#include "../../util.h"
+#include "expr.h"
+#include "table.h"
+#include "code/read.h"
+#include "code/branch.h"
+#include "util.h"
 
 #ifndef NDEBUG_ASM
 #define debug_asm(msg, ...) printf(msg "\n", ##__VA_ARGS__);
