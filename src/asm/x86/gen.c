@@ -128,11 +128,11 @@ static int print_op(int flags, const char *val)
 static const char *get_val_or_reg(expr_branch root, table *tbl)
 {
 	if (root.flags & EXPR_ISNUM) {
-		return root.val;
+		return root.val->buf;
 	} else { 
 		arg a;
 		if (table_get(tbl, &root.val, &a) < 0) {
-			fprintf(stderr, "Undefined symbol: %s\n", root.val);
+			fprintf(stderr, "Undefined symbol: %s\n", root.val->buf);
 			return NULL;
 		}
 		return a.reg;
@@ -144,7 +144,7 @@ static int _eval_expr(expr_branch root, table *tbl)
 {
 	const char *ar;
 	if (root.flags & EXPR_ISLEAF) {
-		debug_asm("; OP '%s' '%s'", debug_expr_op_to_str(root.flags), root.val);
+		debug_asm("; OP '%s' '%s'", debug_expr_op_to_str(root.flags), root.val->buf);
 		const char *arg = get_val_or_reg(root, tbl);
 		if (arg == NULL)
 			return -1;
@@ -171,7 +171,7 @@ static int eval_expr(expr_branch root, const char *dreg, table *tbl)
 {
 	int dreg_is_acc = strcmp(dreg, "rax") == 0;
 	if (root.flags & EXPR_ISLEAF) {
-		debug_asm("; OP '%s'", root.val);
+		debug_asm("; OP '%s'", root.val->buf);
 		const char *arg = get_val_or_reg(root, tbl);
 		if (arg == NULL)
 			return -1;
@@ -199,10 +199,10 @@ static int eval_expr(expr_branch root, const char *dreg, table *tbl)
 			printf("\tpush\trax\n");
 		if (br0.flags & EXPR_ISLEAF && br0.flags & EXPR_ISNUM) {
 			eval_expr(br1, "rax", tbl);
-			t0 = br0.val;
+			t0 = br0.val->buf;
 		} else if (br1.flags & EXPR_ISLEAF && br1.flags & EXPR_ISNUM) {
 			eval_expr(br0, "rax", tbl);
-			t0 = br1.val;
+			t0 = br1.val->buf;
 		} else {
 			eval_expr(br0, "rax", tbl);
 			printf("\tmov\t%s,rax\n", dreg);
@@ -308,17 +308,17 @@ static int parse_control_word(branch *brs, size_t *index, table *tbl)
 static int parse_var(branch br, table *tbl)
 {
 	info_var *inf = br.ptr;
-	debug_asm("; VAR '%s' '%s'\n", inf->type, inf->name);
+	debug_asm("; VAR '%s' '%s'\n", inf->type->buf, inf->name->buf);
 	arg a;
 	if (inf->type != NULL) {
-		a.type = inf->type;
+		a.type = inf->type->buf;
 		a.reg = get_temp_reg();
 		if (table_add(tbl, &inf->name, &a) < 0) {
-			fprintf(stderr, "Duplicate symbol: '%s'\n", inf->name);
+			fprintf(stderr, "Duplicate symbol: '%s'\n", inf->name->buf);
 			return -1;
 		}
-	} else if (table_get(tbl, &inf->name, &a) < 0) {
-		fprintf(stderr, "Undefined symbol: '%s'\n", inf->name);
+	} else if (table_get(tbl, &inf->name->buf, &a) < 0) {
+		fprintf(stderr, "Undefined symbol: '%s'\n", inf->name->buf);
 		return -1;
 	}
 	return eval_expr(inf->expr, a.reg, tbl);
@@ -345,20 +345,20 @@ static int parse(branch *brs, size_t *index, table *tbl)
 
 static int convert_var(info_var *inf)
 {
-	printf("%s:\t", inf->name);
-	if (strcmp(inf->type, "string") == 0) {
+	printf("%s:\t", inf->name->buf);
+	if (strcmp(inf->type->buf, "string") == 0) {
 		printf("db\t\"%s\"\n", "TODO");
-		printf("%s_len:\t equ $ - %s\n", inf->name, inf->name);
-	} else if (strcmp(inf->type, "sbyte" ) == 0) {
+		printf("%s_len:\t equ $ - %s\n", inf->name->buf, inf->name->buf);
+	} else if (strcmp(inf->type->buf, "sbyte" ) == 0) {
 		printf("db\t%s\n", "TODO");
-	} else if (strcmp(inf->type, "sshort") == 0) {
+	} else if (strcmp(inf->type->buf, "sshort") == 0) {
 		printf("dw\t%s\n", "TODO");
-	} else if (strcmp(inf->type, "sint"  ) == 0) {
+	} else if (strcmp(inf->type->buf, "sint"  ) == 0) {
 		printf("dd\t%s\n", "TODO");
-	} else if (strcmp(inf->type, "slong" ) == 0) {
+	} else if (strcmp(inf->type->buf, "slong" ) == 0) {
 		printf("dq\t%s\n", "TODO");
 	} else {
-		printf("Unknown type: %s\n", inf->type);
+		printf("Unknown type: %s\n", inf->type->buf);
 		return -1;
 	}
 	printf("\n");
@@ -374,7 +374,7 @@ static int cmp_keys(const void *a, const void *b)
 static int convert_func(info_func *inf, branch root)
 {
 	if (inf->arg_count > sizeof(arg_regs) / sizeof(*arg_regs)) {
-		fprintf(stderr, "Function '%s' has %d too many arguments (max: %d)\n",
+		fprintf(stderr, "Function '%s' has %lu too many arguments (max: %lu)\n",
 		        inf->name, inf->arg_count - (sizeof(arg_regs) / sizeof(*arg_regs)),
 			sizeof(arg_regs) / sizeof(*arg_regs));
 		return -1;

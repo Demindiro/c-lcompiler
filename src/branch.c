@@ -12,7 +12,7 @@ static void _debug_branch(branch br, int r)
 		case BRANCH_TYPE_VAR:
 		{
 			info_var *i = br.ptr; 
-			debug("%*cVAR '%s' '%s'", r, ' ', i->type, i->name);
+			debug("%*cVAR '%s' '%s'", r, ' ', i->type ? i->type->buf : NULL, i->name->buf);
 			debug_expr(i->expr, r + 2);
 		}
 		break;

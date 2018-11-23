@@ -1,6 +1,8 @@
-compile:
+FORCE:
+
+build: FORCE
 	[ -e build/ ] || mkdir build
-	gcc $$(find src -name '*\.c') -Iinclude/ $(C_FLAGS) -o build/lc
+	gcc $$(find src -name '*\.c') $$(find lib/*/src -name *\.c) -Iinclude/ -Ilib/string/ $(C_FLAGS) -o build/lc
 
 run_test:
 	make compile OPT_LEVEL=0 C_FLAGS=-g

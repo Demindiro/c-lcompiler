@@ -4,7 +4,6 @@
 #include <stddef.h>
 #include "expr.h"
 
-
 // Currently only a placeholder for buffers
 // Should be deprecated and removed sometime
 typedef struct info {
@@ -14,8 +13,8 @@ typedef struct info {
 } info;
 
 typedef struct info_var {
-	char *type;
-	char *name;
+	string type;
+	string name;
 	expr_branch expr;
 } info_var;
 
@@ -26,6 +25,7 @@ typedef struct info_func {
 	char *arg_types[256];
 	char *arg_names[256];
 	char *body;
+	struct lines *lines;
 } info_func;
 
 typedef struct info_for {

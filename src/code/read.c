@@ -20,8 +20,8 @@ static int parse_var(char **pptr, info *inf)
 		ptr++;
 	char c = *ptr;
 	*(ptr++) = 0;
-	if (c != ';') {
-		while (*ptr != ';')
+	if (c != ';' && c != '\n') {
+		while (*ptr != ';' && *ptr != '\n')
 			ptr++;
 		ptr++;
 	}
@@ -158,10 +158,11 @@ int code_read(char *file)
 		}
 	}
 done:
+#if 0 || 1
 	debug("GLOBAL VARIABLES: %lu", global_vars_count);
 	for (size_t i = 0; i < global_vars_count; i++) {
 		info_var *iv = &global_vars[i];
-		debug("  name: '%s',  type: '%s'", iv->name, iv->type); // TODO
+		debug("  name: '%s',  type: '%s'", iv->name->buf, iv->type->buf); // TODO
 	}
 	debug("GLOBAL FUNCTIONS: %lu", global_funcs_count);
 	for (size_t i = 0; i < global_funcs_count; i++) {
@@ -171,5 +172,6 @@ done:
 			debug("    name: '%s', type: '%s'", iv->arg_names[i], iv->arg_types[i]);
 		debug("'''%s'''", iv->body);
 	}
+#endif
 	return 0;
 }
