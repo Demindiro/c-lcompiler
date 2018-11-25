@@ -1,10 +1,10 @@
-#include "optimize.h"
+#include "code/optimize.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include "read.h"
-#include "branch.h"
-#include "../expr.h"
-#include "../util.h"
+#include "code/read.h"
+#include "code/branch.h"
+#include "expr.h"
+#include "util.h"
 
 static int _optimize_expr(expr_branch *root)
 {
@@ -36,6 +36,12 @@ static int optimize_expr(branch *br)
 			return 0; // 'else' doesn't have an expression
 		root = br->expr;
 		break;
+	case BRANCH_TYPE_CALL:
+		for (size_t i = 0; i < ((info_call *)br->ptr)->argc; i++) {
+			if (_optimize_expr(&((info_call *)br->ptr)->args[i]) < 0)
+				return -1;
+		}
+		return 0;
 	default:
 		fprintf(stderr, "Invalid type flags! 0x%x\n", br->flags);
 		return -1;
@@ -72,9 +78,9 @@ static int optimize_branch(branch *root)
 int code_optimize()
 {
 	for (size_t i = 0; i < global_funcs_count; i++) {
-		debug("Optimizing %s:", global_funcs[i].name);
+		debug("Optimizing %s:", global_funcs[i].name->buf);
 		if (optimize_branch(&global_func_branches[i]) < 0)
-			return 0;
+			return -1;
 		debug_branch(global_func_branches[i]);
 	}
 	return 0;

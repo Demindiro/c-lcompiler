@@ -12,7 +12,7 @@ static void _debug_branch(branch br, int r)
 		case BRANCH_TYPE_VAR:
 		{
 			info_var *i = br.ptr; 
-			debug("%*cVAR '%s' '%s'", r, ' ', i->type, i->name);
+			debug("%*cVAR '%s' '%s'", r, ' ', i->type ? i->type->buf : NULL, i->name->buf);
 			debug_expr(i->expr, r + 2);
 		}
 		break;
@@ -33,6 +33,14 @@ static void _debug_branch(branch br, int r)
 				exit(1);
 			}
 			debug_expr(*br.expr, r + 2);
+		}
+		break;
+		case BRANCH_TYPE_CALL:
+		{
+			info_call *i = br.ptr;
+			debug ("%*cFUNC '%s' '%s'", r, ' ', i->type ? i->type->buf : NULL, i->name->buf);
+			for (size_t k = 0; k < i->argc; k++)
+				debug_expr(i->args[k], r + 2);
 		}
 		break;
 		default:

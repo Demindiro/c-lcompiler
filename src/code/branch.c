@@ -1,136 +1,31 @@
-#include "branch.h"
+#include "code/branch.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "read.h"
-#include "../util.h"
-#include "../branch.h"
-#include "../expr.h"
+#include "include/string.h"
+#include "code/read.h"
+#include "code/split.h"
+#include "util.h"
+#include "branch.h"
+#include "expr.h"
 
 
-static const char *var_types[] = {
-	"sbyte",
-	"sshort",
-	"sint",
-	"slong",
-	"ubyte",
-	"ushort",
-	"uint",
-	"ulong",
-	"void",
-};
-
-// ====
-
-static int parse(char **pptr, branch *root);
-
-// ====
-
-static int is_type_name(const char *str)
-{
-	for (size_t i = 0; i < sizeof(var_types) / sizeof(*var_types); i++) {
-		if (strcmp(var_types[i], str) == 0)
-			return 1;
-	}
-	return 0;
-}
+#define error(msg, row, col, ...) \
+	fprintf(stderr, msg " (%d:%d)\n", \
+	row, col, ##__VA_ARGS__)
+#define return_error(msg, row, col, ...) { error(msg, row, col, ##__VA_ARGS__); return -1; }
 
 
-static int is_control_word(const char *str, char **pptr, branch *br)
-{
-	char *ptr = *pptr;
-	const char *w[] = {
-		"if",
-		"while",
-	};
-	const int w_f[] = {
-		BRANCH_CTYPE_IF,
-		BRANCH_CTYPE_WHILE,
-	};
-	for (size_t i = 0; i < sizeof(w) / sizeof(*w); i++) {
-		if (strcmp(w[i], str) == 0) {
-			br->flags |= w_f[i];
-			while (*ptr != '(')
-				ptr++;
-			ptr++;
-			SKIP_WHITE(ptr);
-			br->expr = malloc(sizeof(*br->expr));
-			if (expr_parse(&ptr, br->expr) < 0)
-				return -1;
-			*pptr = ptr;
-			br->flags |= BRANCH_TYPE_C;
-			return 1;
-		}
-	}
-	if (strcmp(str, "for") == 0) {
-		info_for *f = br->ptr = malloc(sizeof(info_for));
-		while (*ptr != '(')
-			ptr++;
-		ptr++;
-		SKIP_WHITE(ptr);
-		f->var = ptr;
-		while (*ptr != ';')
-			ptr++;
-		*(ptr++) = 0;
-		SKIP_WHITE(ptr);
-		if (expr_parse(&ptr, &f->expr))
-			return -1;
-		while (*ptr != ';')
-			ptr++;
-		*(ptr++) = 0;
-		SKIP_WHITE(ptr);
-		f->action = ptr;
-		while (*ptr != ')')
-			ptr++;
-		*ptr = 0;
-		*pptr = ptr + 1;
-		br->flags |= BRANCH_TYPE_C | BRANCH_CTYPE_FOR;
-		return 1;
-	}
-	if (strcmp(str, "return") == 0) {
-		SKIP_WHITE(ptr);
-		while (*ptr != ';')
-			ptr++;
-		*ptr = ')';
-		br->expr = malloc(sizeof(*br->expr));
-		if (expr_parse(pptr, br->expr))
-			return -1;
-		br->flags |= BRANCH_TYPE_C | BRANCH_CTYPE_RET;
-		return 1;
-	}
-	if (strcmp(str, "else") == 0) {
-		br->flags |= BRANCH_TYPE_C | BRANCH_CTYPE_ELSE;
-		*pptr = ptr - 1; // There is no character (')', ';' ...) to skip, so no +1
-		                 // TODO figure out why -1 fixes things with semicolons
-		return 1;
-	}
-	return 0;
-}
+static int parse(lines_t line, size_t *index, branch *root);
 
 
-static int new_root(char **pptr, branch *root) {
-	char *ptr = *pptr;
+static int new_root(lines_t lines, branch *root) {
 	branch br;
 	br.len = 0;
 	br.flags = 0;
 	br.ptr = malloc(1024 * sizeof(branch));
-	int c = 0;
-	while (1) {
-		if (*ptr == '{') {
-			c++;
-		} else if (*ptr == '}') {
-			c--;
-		} else if (*ptr == 0) {
-			fprintf(stderr, "Expected '}' ('%s')\n", *pptr);
-			return -1;
-		}
-		if (c < 0)
-			break;
-		ptr++;
-	}
-	*ptr = 0;
-	while (1) {
-		switch (parse(pptr, &br)) {
+	for (size_t i = 0; i < lines.count; i++) {
+		switch (parse(lines, &i, &br)) {
 		case  1: break;
 		case  0: goto done;
 		case -1: return -1;
@@ -138,120 +33,182 @@ static int new_root(char **pptr, branch *root) {
 	}
 done:
 	br.ptr = realloc(br.ptr, br.len * sizeof(branch));
-	*pptr = ptr + 1;
 	((branch *)root->ptr)[root->len++] = br;
 	return 0;
 }
 
 
-static int parse(char **pptr, branch *root)
+static int eval_ctrl_expr(branch *br, string str, size_t i, line_t line)
 {
-	char c;
-	char *type = NULL, *name;
+	string e = string_copy(str, i + 1, str->len);
+	br->expr = malloc(sizeof(*br->expr));
+	if (expr_parse(e, br->expr) < 0)
+		return_error("Could not parse expression", line.row, line.col);
+	free(e);
+	return 0;
+}
+
+
+
+static int parse_func(lines_t lines, size_t *index, branch *br, size_t i)
+{
+	line_t line = lines.lines[*index];
+	string str = line.str;
+	br->flags |= BRANCH_TYPE_CALL;
+
+	info_call *f = br->ptr = malloc(sizeof(*f));
+	f->type = NULL;
+	f->name = string_copy(str, 0, i);
+	f->argc = 0; 
+	f->args = malloc(sizeof(*f->args) * 256);
+
+	i++;
+	while (str->len != i) {
+		size_t j = i;
+		while (str->buf[i] != ',' && str->len - 1 != i)
+			i++;
+		if (str->len == i - 1 && str->buf[i] != ')')
+			return_error("Expected ')'", line.col, line.row + (int)i);
+		string e = string_copy(str, j, i);
+		if (expr_parse(e, &f->args[f->argc++]) < 0) {
+			return_error("Couldn't parse argument", line.row, line.col + (int)i);
+		}
+		free(e);
+		i++;
+	}
+	return 0;
+}
+
+
+static int parse_var(lines_t lines, size_t *index, branch *br, size_t i)
+{
+	line_t line = lines.lines[*index];
+	string str = line.str;
+	br->flags |= BRANCH_TYPE_VAR;
+
+	size_t j = 0;
+	string type = NULL;
+	if (str->buf[i] == ' ') {
+		type = string_copy(str, 0, i);
+		i++;
+		j = i;
+		while (IS_VAR_CHAR(str->buf[i]))
+			i++;
+	}
+	string name = string_copy(str, j, i);
+	if (str->len == i)
+		return 0;
+
+	info_var *f = br->ptr = malloc(sizeof(info_var));
+	f->type = type;
+	f->name = name;
+	f->expr.flags = 0;
+	if (strchr("=+-*/%<>", str->buf[i]) != NULL) {
+		size_t j = i;
+		if (strchr("+-*/%", str->buf[i]) != NULL) {
+			i++;
+		} else if (strchr("<>", str->buf[i]) != NULL) {
+			i++;
+			if (strchr("<>", str->buf[i]) != NULL)
+				i++;
+		}
+		if (str->buf[i] != '=')
+			return_error("Expected '='", line.row, line.col);
+		i++;
+		string e = string_copy(str, i, str->len);
+		if (j != i - 1) {
+			string c[3] = { name, string_copy(str, j, i - 1), e };
+			e = string_concat(c, 2);
+			free(c[1]);
+			free(c[2]);
+		}
+		if (expr_parse(e, &f->expr) < 0)
+			return_error("Could not parse expression", line.row, line.col);
+		free(e);
+	}
+	return 0;
+}
+
+
+static int parse(lines_t lines, size_t *index, branch *root)
+{
+	line_t line = lines.lines[*index];
+	string str = line.str;
+	size_t i = 0;
+	string type = NULL, name;
 	branch br;
 	memset(&br, 0, sizeof(br));
 	br.flags = BRANCH_ISLEAF;
-	SKIP_WHITE(*pptr);
-	char *ptr = *pptr;
-	if (*ptr == 0)
-		return 0;
-	if (*ptr == '{') {
-		ptr++;
-		if (new_root(&ptr, root) < 0)
+	if (str->buf[0] == '{') {
+		size_t i = *index + 1;
+		// No need to check range, otherwise the compilation would have
+		// failed earlier.
+		while (lines.lines[*index].str->buf[0] != '}')
+			(*index)++;
+		lines_t l = { .count = *index - i, .lines = lines.lines + i };
+		if (new_root(l, root) < 0)
 			return -1;
-		*pptr = ptr;
 		return 1;
-	} 	
-	char *orgptr = ptr;
-	while (!IS_WHITE(*ptr) && *ptr != ';' && !IS_OPERATOR(*ptr) && *ptr != '(')
-		ptr++;
-	if (!IS_WHITE(*ptr)) {
-		c = *ptr;
-		*(ptr++) = 0;
-	} else {
-		*(ptr++) = 0;
-		SKIP_WHITE(ptr);
-		c = *ptr;
 	}
-	if (is_type_name(orgptr)) {
-		type = orgptr;
-		orgptr = ptr;
-		if (!('a' <= *ptr && *ptr <= 'z') && !('A' <= *ptr && *ptr <= 'Z') && *ptr != '_') {
-			fprintf(stderr, "Invalid statement '%s'\n", ptr);
-			return -1;
-		}
-		ptr++;
-		while (!IS_WHITE(*ptr) && *ptr != ';' && *ptr != '=')
-			ptr++;
-		if (!IS_WHITE(*ptr)) {
-			c = *ptr;
-			*(ptr++) = 0;
-		} else {
-			*(ptr++) = 0;
-			SKIP_WHITE(ptr);
-			c = *ptr;
-		}
-	} else {
-		int r = is_control_word(orgptr, &ptr, &br);
-		if (r < 0)
-			return -1;
-		else if (r > 0)
-			goto done;
-	}
-	ptr++;
-	name = orgptr;
-	if (c == ';' || IS_OPERATOR(c)) {
-		info_var *f = br.ptr = malloc(sizeof(info_var));
-		f->type = type;
-		f->name = name;
-		f->expr.flags = 0;
-		if (IS_OPERATOR(c)) {
-			orgptr = ptr;
-			int count = 0;
-			while (*ptr != ';') {
-				if (*ptr == '(')
-					count++;
-				else if (*ptr == ')')
-					count--;
-				if (count < 0) {
-					fprintf(stderr, "Unexpected ')': '%s'\n", orgptr);
-					return -1;
-				}
-				ptr++;
-			}
-			if (count > 0) {
-				fprintf(stderr, "Missing ')': '%s'\n", orgptr);
+
+	while (!IS_VAR_CHAR(str->buf[i]))
+		i++;
+	size_t j = i;
+	while (IS_VAR_CHAR(str->buf[i]))
+		i++;
+
+	// Control type
+	switch (i) {
+	case 2:
+		if (memcmp(str->buf, "if", 2) == 0) {
+			if (eval_ctrl_expr(&br, str, i, line) < 0)
 				return -1;
-			}
-			*(ptr++) = ')'; // ')' indicates the end of an expression
-			if (c != '=') {
-				orgptr += 2;
-				SKIP_WHITE(orgptr);
-				char buf[0x10000], *d = buf;
-				*(ptr-1) = 0;
-				sprintf(buf, "%s%c(%s))", f->name, c, orgptr);
-				d = buf;
-				if (expr_parse(&d, &f->expr) < 0)
-					return -1;
-			} else {
-				if (expr_parse(&orgptr, &f->expr) < 0)
-					return -1;
-			}
+			br.flags |= BRANCH_TYPE_C | BRANCH_CTYPE_IF;
+			goto done;
 		}
-		br.flags |= BRANCH_TYPE_VAR;
-		goto done;
-	}
-	SKIP_WHITE(ptr);
-	while (*ptr != ';') {
-		if (*ptr == 0) {
-			debug("Expected semicolon '%s'", *pptr);
-			return -1;
+		break;
+	case 3:
+		if (memcmp(str->buf, "for", 3) == 0) {
+			return_error("'for' is not implemented", line.row, line.col);
+			br.flags |= BRANCH_TYPE_C | BRANCH_CTYPE_FOR;
+			goto done;
 		}
-		ptr++;
+		break;
+	case 4:
+		if (memcmp(str->buf, "else", 4) == 0) {
+			if (str->len > 4)
+				return_error("Unexpected characters", line.row, line.col + 4);
+			br.flags |= BRANCH_TYPE_C | BRANCH_CTYPE_ELSE;
+			goto done;
+		}
+		break;
+	case 5:
+		if (memcmp(str->buf, "while", 5) == 0) {
+			if (eval_ctrl_expr(&br, str, i, line) < 0)
+				return -1;
+			br.flags |= BRANCH_TYPE_C | BRANCH_CTYPE_WHILE;
+			goto done;
+		}
+		break;
+	case 6:
+		if (memcmp(str->buf, "return", 6) == 0) {
+			if (eval_ctrl_expr(&br, str, i, line) < 0)
+				return -1;
+			br.flags |= BRANCH_TYPE_C | BRANCH_CTYPE_RET;
+			goto done;
+		}
+		break;
 	}
-done:	
+	char c = str->buf[i];
+
+	if (str->len == i)
+		return_error("Expected expression", line.row, line.col + (int)i);
+
+	if ((c == '(' ? parse_func(lines, index, &br, i) : parse_var(lines, index, &br, i)) < 0)
+		return -1;
+
+done:
 	((branch *)root->ptr)[root->len++] = br;
-	*pptr = ptr + 1; // Skip ';'
 	return 1;
 }
 
@@ -261,14 +218,13 @@ int code_branch()
 	global_func_branches = malloc(global_funcs_count * sizeof(branch));
 	for (size_t i = 0; i < global_funcs_count; i++) {
 		info_func *inf = global_funcs + i;
-		debug("Branching '%s'", inf->name);
-		char *ptr = inf->body;
+		debug("Branching '%s'", inf->name->buf);
 		branch br;
 		br.flags = 0;
 		br.len = 0;
 		br.ptr = malloc(1024 * sizeof(branch));
-		while (1) {
-			switch (parse(&ptr, &br)) {
+		for(size_t j = 0; j < inf->lines->count; j++) {
+			switch (parse(*inf->lines, &j, &br)) {
 			case  1: break;
 			case  0: goto done;
 			case -1: return -1;

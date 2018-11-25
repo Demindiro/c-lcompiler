@@ -1,6 +1,8 @@
 #ifndef EXPR_H
 #define EXPR_H
 
+#include "include/string.h"
+
 #define EXPR_MASK
 #define EXPR_ISLEAF 0x100
 
@@ -37,18 +39,19 @@
 #define EXPR_OP_B_RS   0x36 // >>
 
 #define EXPR_ISNUM     0x1000
+#define EXPR_ISFUNC    0x2000
 
 typedef struct expr_branch {
 	int flags;
 	int len;
 	union {
 		void *ptr;
-		char *val;
+		string val;
 		struct expr_branch *branches;
 	};
 } expr_branch;
 
-int expr_parse(char **pptr, expr_branch *root);
+int expr_parse(string str, expr_branch *root);
 
 const char *debug_expr_op_to_str(int flags);
 

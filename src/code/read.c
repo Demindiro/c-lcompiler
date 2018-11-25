@@ -1,12 +1,12 @@
-#include "read.h"
+#include "code/read.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
-#include "../info.h"
-#include "../util.h"
-#include "../expr.h"
+#include "info.h"
+#include "util.h"
+#include "expr.h"
 
 
 static int parse_var(char **pptr, info *inf)
@@ -20,8 +20,8 @@ static int parse_var(char **pptr, info *inf)
 		ptr++;
 	char c = *ptr;
 	*(ptr++) = 0;
-	if (c != ';') {
-		while (*ptr != ';')
+	if (c != ';' && c != '\n') {
+		while (*ptr != ';' && *ptr != '\n')
 			ptr++;
 		ptr++;
 	}
@@ -104,9 +104,7 @@ int code_parse(char **pptr, char *end, info *inf)
 	while (!IS_WHITE(*ptr))
 		ptr++;
 	len = ptr - orgptr;
-	inf->type = malloc(len + 1);
-	memcpy(inf->type, orgptr, len);
-	inf->type[len] = 0;
+	inf->type = string_create(orgptr, len);
 	
 	SKIP_WHITE(ptr);
 	
@@ -114,9 +112,7 @@ int code_parse(char **pptr, char *end, info *inf)
 	while (!IS_WHITE(*ptr) && *ptr != '(' && *ptr != '=')
 		ptr++;
 	len = ptr - orgptr,
-	inf->name = malloc(len + 1);
-	memcpy(inf->name, orgptr, len);
-	inf->name[len] = 0;
+	inf->name = string_create(orgptr, len);
 	
 	SKIP_WHITE(ptr);
 	
@@ -158,18 +154,20 @@ int code_read(char *file)
 		}
 	}
 done:
+#if 0 || 1
 	debug("GLOBAL VARIABLES: %lu", global_vars_count);
 	for (size_t i = 0; i < global_vars_count; i++) {
 		info_var *iv = &global_vars[i];
-		debug("  name: '%s',  type: '%s'", iv->name, iv->type); // TODO
+		debug("  name: '%s',  type: '%s'", iv->name->buf, iv->type->buf); // TODO
 	}
 	debug("GLOBAL FUNCTIONS: %lu", global_funcs_count);
 	for (size_t i = 0; i < global_funcs_count; i++) {
 		info_func *iv = &global_funcs[i];
-		debug("  name: '%s', type: '%s'", iv->name, iv->type);
+		debug("  name: '%s', type: '%s'", iv->name->buf, iv->type->buf);
 		for (size_t i = 0; i < iv->arg_count; i++)
 			debug("    name: '%s', type: '%s'", iv->arg_names[i], iv->arg_types[i]);
 		debug("'''%s'''", iv->body);
 	}
+#endif
 	return 0;
 }

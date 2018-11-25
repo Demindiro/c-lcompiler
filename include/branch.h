@@ -19,6 +19,8 @@
 #define BRANCH_TYPE_MASK   0xF0
 #define BRANCH_TYPE_VAR    0x10
 #define BRANCH_TYPE_C      0x20
+#define BRANCH_TYPE_CALL   0x40
+
 
 typedef struct branch {
 	int flags;
