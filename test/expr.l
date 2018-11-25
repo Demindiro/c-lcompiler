@@ -1,8 +1,10 @@
 int main()
 	{
-	int x = 104
+	int x = 104; print_int(z)
 	int a = 500 - 200
-	int y = 500 - (2 * x)
-	int z = y / 2
-	return x + y + z
+	int y = 500 - (2 * x); print_int(y)
+	int z = y / 2; print_int(z)
+	print_int(x + y + z)
+	print_int(a)
+	return 0
 	}
