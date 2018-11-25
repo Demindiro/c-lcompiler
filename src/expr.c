@@ -223,7 +223,7 @@ static int _expr_parse(string str, expr_branch *root)
 		// Logical
 		case '~': br.flags |= EXPR_OP_B_XOR; break;
 		case '^': br.flags |= EXPR_OP_B_XOR; break;
-		default: fprintf(stderr, "Invalid symbol '%c': '%s'", str->buf[i], str->buf); return -1;
+		default: fprintf(stderr, "Invalid symbol '%c': '%s'\n", str->buf[i], str->buf); return -1;
 		}
 		i++;
 		if (str->buf[i] == '(') {

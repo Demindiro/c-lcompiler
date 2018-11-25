@@ -28,6 +28,13 @@ typedef struct info_func {
 	struct lines *lines;
 } info_func;
 
+typedef struct info_call {
+	string type;
+	string name;
+	size_t argc;
+	expr_branch *args;
+} info_call;
+
 typedef struct info_for {
 	char *var;
 	char *action;

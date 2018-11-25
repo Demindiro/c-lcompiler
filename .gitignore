@@ -1,4 +1,8 @@
+*
+!*\.*
+
 build/
-*.DSYM
-test
 .DS_Store
+*.o
+*.out
+*.asm

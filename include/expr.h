@@ -39,6 +39,7 @@
 #define EXPR_OP_B_RS   0x36 // >>
 
 #define EXPR_ISNUM     0x1000
+#define EXPR_ISFUNC    0x2000
 
 typedef struct expr_branch {
 	int flags;

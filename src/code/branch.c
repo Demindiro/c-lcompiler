@@ -49,6 +49,87 @@ static int eval_ctrl_expr(branch *br, string str, size_t i, line_t line)
 }
 
 
+
+static int parse_func(lines_t lines, size_t *index, branch *br, size_t i)
+{
+	line_t line = lines.lines[*index];
+	string str = line.str;
+	br->flags |= BRANCH_TYPE_CALL;
+
+	info_call *f = br->ptr = malloc(sizeof(*f));
+	f->type = NULL;
+	f->name = string_copy(str, 0, i);
+	f->argc = 0; 
+	f->args = malloc(sizeof(*f->args) * 256);
+
+	i++;
+	while (str->len != i) {
+		size_t j = i;
+		while (str->buf[i] != ',' && str->len - 1 != i)
+			i++;
+		if (str->len == i - 1 && str->buf[i] != ')')
+			return_error("Expected ')'", line.col, line.row + (int)i);
+		string e = string_copy(str, j, i);
+		if (expr_parse(e, &f->args[f->argc++]) < 0) {
+			return_error("Couldn't parse argument", line.row, line.col + (int)i);
+		}
+		free(e);
+		i++;
+	}
+	return 0;
+}
+
+
+static int parse_var(lines_t lines, size_t *index, branch *br, size_t i)
+{
+	line_t line = lines.lines[*index];
+	string str = line.str;
+	br->flags |= BRANCH_TYPE_VAR;
+
+	size_t j = 0;
+	string type = NULL;
+	if (str->buf[i] == ' ') {
+		type = string_copy(str, 0, i);
+		i++;
+		j = i;
+		while (IS_VAR_CHAR(str->buf[i]))
+			i++;
+	}
+	string name = string_copy(str, j, i);
+	if (str->len == i)
+		return 0;
+
+	info_var *f = br->ptr = malloc(sizeof(info_var));
+	f->type = type;
+	f->name = name;
+	f->expr.flags = 0;
+	if (strchr("=+-*/%<>", str->buf[i]) != NULL) {
+		size_t j = i;
+		if (strchr("+-*/%", str->buf[i]) != NULL) {
+			i++;
+		} else if (strchr("<>", str->buf[i]) != NULL) {
+			i++;
+			if (strchr("<>", str->buf[i]) != NULL)
+				i++;
+		}
+		if (str->buf[i] != '=')
+			return_error("Expected '='", line.row, line.col);
+		i++;
+		string e = string_copy(str, i, str->len);
+		if (j != i - 1) {
+			string c[3] = { name, string_copy(str, j, i - 1), e };
+			e = string_concat(c, 2);
+			free(c[1]);
+			free(c[2]);
+		}
+		if (expr_parse(e, &f->expr) < 0)
+			return_error("Could not parse expression", line.row, line.col);
+		free(e);
+	}
+	return 0;
+}
+
+
 static int parse(lines_t lines, size_t *index, branch *root)
 {
 	line_t line = lines.lines[*index];
@@ -118,49 +199,14 @@ static int parse(lines_t lines, size_t *index, branch *root)
 		}
 		break;
 	}
-
-	br.flags |= BRANCH_TYPE_VAR;
 	char c = str->buf[i];
-	if (str->len <= i && c != ' ')
-		return_error("Expected expression", line.row, line.col + (int)i);
-	if (c == ' ') {
-		type = string_copy(str, j, i);
-		i++;
-		j = i;
-		while (IS_VAR_CHAR(str->buf[i]))
-			i++;
-	}
-	name = string_copy(str, j, i);
-	if (str->len == i)
-		goto done;
 
-	info_var *f = br.ptr = malloc(sizeof(info_var));
-	f->type = type;
-	f->name = name;
-	f->expr.flags = 0;
-	if (strchr("=+-*/%<>", str->buf[i]) != NULL) {
-		size_t j = i;
-		if (strchr("+-*/%", str->buf[i]) != NULL) {
-			i++;
-		} else if (strchr("<>", str->buf[i]) != NULL) {
-			i++;
-			if (strchr("<>", str->buf[i]) != NULL)
-				i++;
-		}
-		if (str->buf[i] != '=')
-			return_error("Expected '='", line.row, line.col);
-		i++;
-		string e = string_copy(str, i, str->len);
-		if (j != i - 1) {
-			string c[3] = { name, string_copy(str, j, i - 1), e };
-			e = string_concat(c, 2);
-			free(c[1]);
-			free(c[2]);
-		}
-		if (expr_parse(e, &f->expr) < 0)
-			return_error("Could not parse expression", line.row, line.col);
-		free(e);
-	}
+	if (str->len == i)
+		return_error("Expected expression", line.row, line.col + (int)i);
+
+	if ((c == '(' ? parse_func(lines, index, &br, i) : parse_var(lines, index, &br, i)) < 0)
+		return -1;
+
 done:
 	((branch *)root->ptr)[root->len++] = br;
 	return 1;

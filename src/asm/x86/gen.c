@@ -107,7 +107,7 @@ const char *var_types[] = {
 };
 
 
-enum REG  arg_regs[] = { AX, BX, CX, DX };
+enum REG  arg_regs[] = { DI, SI, DX, CX, R8, R9 };
 enum REG temp_regs[] = { R8, R9, R10, R11, R12, R13, R14, R15 }; 
 unsigned int temp_regs_taken;
 
@@ -420,6 +420,7 @@ static int parse_if_expr(assembly_t *assm, string lbl, expr_branch br, table *tb
 	return 0;
 }
 
+
 static int parse_control_word(assembly_t *assm, branch *brs, size_t *index, table *tbl)
 {
 	branch br = brs[*index];
@@ -459,6 +460,7 @@ static int parse_control_word(assembly_t *assm, branch *brs, size_t *index, tabl
 	return 0;
 }
 
+
 static int parse_var(assembly_t *assm, branch br, table *tbl)
 {
 	info_var *inf = br.ptr;
@@ -485,6 +487,54 @@ static int parse_var(assembly_t *assm, branch br, table *tbl)
 	return eval_expr(assm, inf->expr, reg, tbl);
 }
 
+
+static string referenced_funcs[256];
+static int referenced_funcs_count = 0;
+static int parse_call(assembly_t *assm, branch br, table *tbl)
+{
+	info_call *call = br.ptr;
+
+	for (size_t i = 0; i < referenced_funcs_count; i++) {
+		if (string_eq(referenced_funcs[i], call->name))
+			goto referenced;
+	}
+	referenced_funcs[referenced_funcs_count++] = call->name;
+referenced:
+
+	assm->comments[assm->count++] = string_create("CALL");
+	for (size_t i = 0; i < sizeof(temp_regs) / sizeof(*temp_regs); i++) {
+		if (temp_regs_taken & (1 << i)) {
+			op_t op = { .op = PUSH, .src = temp_regs[i] };
+			assm->lines[assm->count++] = op;
+		}
+	}
+	enum REG argr[sizeof(arg_regs) / sizeof(*arg_regs)];
+	for (size_t i = 0; i < call->argc; i++) {
+		enum REG r = arg_regs[i];
+		if (1) { // TODO
+			op_t push = { .op = PUSH, .src = r };
+			assm->lines[assm->count++] = push;
+		}
+		eval_expr(assm, call->args[i], r, tbl);
+	}
+
+	op_t op = { .op = CALL, .label = call->name };
+	assm->lines[assm->count++] = op;
+
+	for (size_t i = call->argc - 1; i != -1; i--) {
+		op_t pop = { .op = POP, .dest = arg_regs[i] };
+		assm->lines[assm->count++] = pop;
+	}
+	for (size_t i = sizeof(temp_regs) / sizeof(*temp_regs) - 1; i != -1; i--) {
+		if (temp_regs_taken & (1 << i)) {
+			op_t op = { .op = POP, .dest = temp_regs[i] };
+			assm->lines[assm->count++] = op;
+		}
+	}
+	return 0;
+}
+
+
 static int parse(assembly_t *assm, branch *brs, size_t *index, table *tbl)
 {
 	branch br = brs[*index];
@@ -493,6 +543,8 @@ static int parse(assembly_t *assm, branch *brs, size_t *index, table *tbl)
 			return parse_control_word(assm, brs, index, tbl);
 		else if (br.flags & BRANCH_TYPE_VAR)
 			return parse_var(assm, br, tbl);
+		else if (br.flags & BRANCH_TYPE_CALL)
+			return parse_call(assm, br, tbl);
 		fprintf(stderr, "Invalid type flags! 0x%x (Please file a bug report)\n", br.flags);
 		return -1;
 	} else {
@@ -597,6 +649,7 @@ static const char *arg_to_str(arg_t arg, unsigned int bits)
 			case BX : return "rbx";
 			case CX : return "rcx";
 			case DX : return "rdx";
+			case DI : return "rdi";
 			case R8 : return "r8" ;
 			case R9 : return "r9" ;
 			case R10: return "r10";
@@ -640,14 +693,15 @@ static int print_op(assembly_t *assm, size_t i)
 
 		case CMP: printf("cmp"); break;
 
-		case JMP: printf("jmp"); break;
-		case JE : printf("je" ); break;
-		case JNE: printf("jne"); break;
-		case JL : printf("jl" ); break;
-		case JG : printf("jg" ); break;
-		case JLE: printf("jle"); break;
-		case JGE: printf("jge"); break;
-		case RET: printf("ret"); break;
+		case JMP : printf("jmp" ); break;
+		case JE  : printf("je"  ); break;
+		case JNE : printf("jne" ); break;
+		case JL  : printf("jl"  ); break;
+		case JG  : printf("jg"  ); break;
+		case JLE : printf("jle" ); break;
+		case JGE : printf("jge" ); break;
+		case CALL: printf("call"); break;
+		case RET : printf("ret" ); break;
 		default:
 			printf("INVAL_OP\t%u", op.op);
 		}
@@ -673,13 +727,14 @@ static int print_op(assembly_t *assm, size_t i)
 			printf("\t%s,%s,%s", arg_to_str(d, b), arg_to_str(s, b), arg_to_str(op.arg2, b));
 			break;
 
-		case JMP:
-		case JE :
-		case JNE:
-		case JL :
-		case JG :
-		case JLE:
-		case JGE:
+		case CALL:
+		case JMP :
+		case JE  :
+		case JNE :
+		case JL  :
+		case JG  :
+		case JLE :
+		case JGE :
 			printf("\t%s", op.label->buf);
 			break;
 		case RET:
@@ -739,6 +794,10 @@ int asm_gen()
 		if (convert_func(&assm, &global_funcs[i], global_func_branches[i]) < 0)
 			return -1;
 	}
+	for (size_t i = 0; i < global_funcs_count; i++)
+		printf("global %s\n", global_funcs[i].name->buf);
+	for (size_t i = 0; i < referenced_funcs_count; i++) // TODO
+		printf("extern %s\n", referenced_funcs[i]->buf);
 	for (size_t i = 0; i < assm.count; i++)
 		print_op(&assm, i);
 	free(assm.lines);
