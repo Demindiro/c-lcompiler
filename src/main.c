@@ -26,7 +26,7 @@ int main(int argc, char **argv)
 	if (lines == NULL)
 		return 1;
 	for (size_t i = 0; i < lines[0].count; i++)
-		printf("%d:%d\t%s\n", lines[0].lines[i].row, lines[0].lines[i].col, lines[0].lines[i].str->buf);
+		fprintf(stderr, "%d:%d\t%s\n", lines[0].lines[i].row, lines[0].lines[i].col, lines[0].lines[i].str->buf);
 	for (size_t i = 0; i < global_funcs_count; i++) {
 		free(global_funcs[i].body);
 		global_funcs[i].lines = lines + i;

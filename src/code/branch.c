@@ -172,7 +172,7 @@ int code_branch()
 	global_func_branches = malloc(global_funcs_count * sizeof(branch));
 	for (size_t i = 0; i < global_funcs_count; i++) {
 		info_func *inf = global_funcs + i;
-		debug("Branching '%s'", inf->name);
+		debug("Branching '%s'", inf->name->buf);
 		branch br;
 		br.flags = 0;
 		br.len = 0;

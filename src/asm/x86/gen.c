@@ -1,28 +1,104 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "include/string.h"
 #include "expr.h"
 #include "table.h"
 #include "code/read.h"
 #include "code/branch.h"
 #include "util.h"
 
-#ifndef NDEBUG_ASM
-#define debug_asm(msg, ...) printf(msg "\n", ##__VA_ARGS__);
-#else
-#define debug_asm(msg, ...) ""
-#endif
+
+enum OP {
+	/* Arithemic */	
+	ADD = 100,
+	SUB,
+	IMUL,
+	IDIV,
+	
+	/* Bitswise */
+	AND = 1000,
+	OR,
+	XOR,
+	CMP,
+	
+	/* Jumps */
+	JMP = 10000,
+	JE,
+	JNE,
+	JG,
+	JL,
+	JLE,
+	JGE,
+	CALL,
+	RET,
+
+	/* Store/load */
+	MOV = 100000,
+	PUSH,
+	POP,
+};
+
+
+enum REG {
+	AX = 1, BX, CX, DX,
+	AL, AH, BL, BH,
+	CL, CH, DL, DH,
+	SI, DI, SP, BP,
+	IP,
+	CS, DS, SS, ES,
+	FS, GS,
+	R8 , R9 , R10, R11,
+	R12, R13, R14, R15,
+};
+
+
+#define BITS_8  0
+#define BITS_16 1
+#define BITS_32 2
+#define BITS_64 3
+
 
 typedef struct arg {
-	char *type;
-	const char *reg;
-} arg;
+	union {
+		enum REG reg;
+		size_t val;
+	};
+	unsigned int is_num : 1;
+} arg_t;
+
+
+typedef struct op {
+	enum OP op;
+	union {
+		string label;
+		//arg_t arg0;
+		arg_t src;
+	};
+	unsigned int is_label : 1;
+	unsigned int bits : 2;
+	union {
+		//arg_t arg1;
+		arg_t dest;
+	};
+	arg_t arg2;
+} op_t;
+
+
+typedef struct assembly {
+	size_t size;
+	size_t count;
+	op_t   *lines;
+	string *comments;
+} assembly_t;
+
 
 const char *var_types[] = {
-	"sbyte",
-	"sshort",
-	"sint",
-	"slong",
+	"bool",
+	"byte",
+	"short",
+	"int",
+	"long",
 	"ubyte",
 	"ushort",
 	"uint",
@@ -30,52 +106,95 @@ const char *var_types[] = {
 	"void",
 };
 
-// Anybody has a good reference to general conventions of using the x86 registers? (like RISC-V has)
-const char *arg_regs[] = {
-	"rax", "rbx", "rcx", "rdx",
-};
 
-const char *temp_regs[] = {
-	"r8" , "r9" , "r10", "r11",
-	"r12", "r13", "r14", "r15",
-};
+enum REG  arg_regs[] = { AX, BX, CX, DX };
+enum REG temp_regs[] = { R8, R9, R10, R11, R12, R13, R14, R15 }; 
 unsigned int temp_regs_taken;
 
 
-static int parse(branch *brs, size_t *index, table *tbl);
+static string str_tab;
+static string str_comma;
+static string str_op_mov;
+static string str_op_add;
+static string str_op_sub;
+static string str_op_imul;
+static string str_op_idiv;
+static string str_op_push;
+static string str_op_pop;
+static string str_reg_rax;
+static string str_reg_rbx;
+static string str_reg_rcx;
+static string str_reg_rdx;
 
-static const char *get_temp_reg_once()
+__attribute__((constructor))
+void init_strs()
+{
+	str_tab     = string_create("\t");
+	str_comma   = string_create("," );
+
+	str_op_mov  = string_create("mov" );
+	str_op_add  = string_create("add" );
+	str_op_sub  = string_create("sub" );
+	str_op_imul = string_create("imum");
+	str_op_idiv = string_create("idiv");
+	str_op_push = string_create("push");
+	str_op_pop  = string_create("pop" );
+
+	str_reg_rax = string_create("rax");
+	str_reg_rbx = string_create("rbx");
+	str_reg_rcx = string_create("rcx");
+	str_reg_rdx = string_create("rdx");
+
+	const char *arg_regs_a[] = {
+		"rax", "rbx", "rcx", "rdx",
+	};
+	const char *temp_regs_a[] = {
+		"r8" , "r9" , "r10", "r11",
+		"r12", "r13", "r14", "r15",
+	};
+}
+
+
+static int parse(assembly_t *assm, branch *brs, size_t *index, table *tbl);
+
+
+static enum REG get_temp_reg_once()
 {
 	for (size_t i = 0; i < sizeof(temp_regs) / sizeof(*temp_regs); i++) {
 		if (!(temp_regs_taken & (2 << i)))
 			return temp_regs[i];
 	}
-	return NULL;
+	return -1;
 }
 
-static const char *get_temp_reg()
+static enum REG get_temp_reg()
 {
 	for (size_t i = 0; i < sizeof(temp_regs) / sizeof(*temp_regs); i++) {
-		if (!(temp_regs_taken & (2 << i))) {
-			temp_regs_taken |= 2 << i;
+		if (!(temp_regs_taken & (1 << i))) {
+			temp_regs_taken |= 1 << i;
 			return temp_regs[i];
 		}
 	}
-	return NULL;
+	return -1;
 }
 
-static int get_label(char *buf, char *prefix)
+static string get_label(const char *prefix)
 {
 	static int counter = 0;
 	if (prefix == NULL)
 		prefix = "L";
+	char buf[64];
 	sprintf(buf, ".%s%d", prefix, counter++);
-	return 0;
+	return string_create(buf);
 }
 
-static void free_temp_reg(const char *reg) {
-	size_t i = reg[2] - '0';
-	temp_regs_taken &= ~i;
+static void free_temp_reg(enum REG reg) {
+	for (size_t i = 0; i < sizeof(temp_regs) / sizeof(*temp_regs); i++) {
+		if (temp_regs[i] == reg) {
+			temp_regs_taken &= ~(1 << i);
+			return;
+		}
+	}
 }
 
 static size_t is_var_type(char *str)
@@ -86,181 +205,213 @@ static size_t is_var_type(char *str)
 	return -1;
 }
 
-static int print_op(int flags, const char *val)
+
+static int parse_op(assembly_t *assm, int flags, enum REG dest, enum REG src, size_t val)
 {
-	const char *treg, *extra_op0, *extra_op1;
-	char buf[0x10];
+	enum OP op;
 	switch (flags & EXPR_OP_MASK) {
-	case 0:             printf("\tmov\trax,%s\n" , val); break;
-	case EXPR_OP_A_ADD: printf("\tadd\trax,%s\n" , val); break;
-	case EXPR_OP_A_SUB: printf("\tsub\trax,%s\n" , val); break;
-	case EXPR_OP_A_MUL: printf("\timul\trax,%s\n", val); break;
+	case 0:             op = MOV; break;
+	case EXPR_OP_A_ADD: op = ADD; break;
+	case EXPR_OP_A_SUB: op = SUB; break;
+	case EXPR_OP_A_MUL: op = IMUL; break;
 	case EXPR_OP_A_DIV:
-	case EXPR_OP_A_REM:
-		if (flags & EXPR_ISNUM) {
-			treg = get_temp_reg_once();
-			sprintf(buf, "\tmov\t%s,%s\n", treg, val);
-			extra_op0 = buf;
-		} else {
-			treg = val;
-			extra_op0 = "";
-		}
-		extra_op1 = ((flags & EXPR_OP_MASK) == EXPR_OP_A_REM) ? "\tmov\trax,rdx\n" : "";
-		printf("\tpush\trdx\n"
-		       "\txor\trdx,rdx\n"
-		       "%s"
-		       "\tidiv\t%s\n"
-		       "%s"
-		       "\tmov\trdx,%s\n"
-		       "\tpop\trdx\n",
-		       extra_op0, treg, extra_op1, treg);
-		break;
-	case EXPR_OP_C_GRT:
-	case EXPR_OP_C_LST:
-	case EXPR_OP_C_GET: printf("\tcmp\t%s,rax\n", val); break;
-	case EXPR_OP_C_LET: printf("\tcmp\trax,%s\n", val); break;
+	case EXPR_OP_A_REM: op = IDIV; break;
+	case EXPR_OP_C_GRT: /* TODO */; break;
+	case EXPR_OP_C_LST: /* TODO */; break;
+	case EXPR_OP_C_GET:; enum REG tmp = val; val = dest; dest = tmp;
+	case EXPR_OP_C_LET: op = CMP; break;
 	default: fprintf(stderr, "Invalid expression operator flags! 0x%x (This is a bug)\n", flags); return -1;
+	}
+	if (op == IDIV) {
+		op_t push = { .op = PUSH, .src  = DX };
+		op_t zero = { .op = XOR , .dest = DX, .src = DX };
+		assm->lines[assm->count++] = push;
+		assm->lines[assm->count++] = zero;
+		if (flags & EXPR_ISNUM) {
+			src = get_temp_reg_once();
+			op_t mov = { .op = MOV, .dest = src, .src = { .val = val, .is_num = 1 }};
+			assm->lines[assm->count++] = mov;
+		}
+		op_t div  = { .op = op  , .src  = src };
+		//op_t mov  = { .op = MOV , .dest = dest, .src = src };
+		op_t pop  = { .op = POP , .dest = DX };
+		assm->lines[assm->count++] = div;
+		//assm->lines[assm->count++] = mov;
+		assm->lines[assm->count++] = pop;
+	} else if (op == IMUL) {
+		op_t o = { .op = op, .dest = dest, .src = dest, .arg2 = src };
+		assm->lines[assm->count++] = o;
+	} else {
+		op_t o = { .op = op, .dest = dest };
+		if (flags & EXPR_ISNUM) {
+			o.src.val = val;
+			o.src.is_num = 1;
+		} else {
+			o.src.reg = src;
+		}
+		assm->lines[assm->count++] = o;
 	}
 	return 0;
 }
 
 
-static const char *get_val_or_reg(expr_branch root, table *tbl)
-{
-	if (root.flags & EXPR_ISNUM) {
-		return root.val->buf;
-	} else { 
-		arg a;
-		if (table_get(tbl, &root.val, &a) < 0) {
-			fprintf(stderr, "Undefined symbol: %s\n", root.val->buf);
-			return NULL;
-		}
-		return a.reg;
-	}
-}
-
-
-static int _eval_expr(expr_branch root, table *tbl)
+static int _eval_expr(assembly_t *assm, enum REG dreg, expr_branch root, table *tbl)
 {
 	const char *ar;
 	if (root.flags & EXPR_ISLEAF) {
-		debug_asm("; OP '%s' '%s'", debug_expr_op_to_str(root.flags), root.val->buf);
-		const char *arg = get_val_or_reg(root, tbl);
-		if (arg == NULL)
-			return -1;
-		if (print_op(root.flags, arg) < 0)
+		char buf[256];
+		sprintf(buf, "EXPR %s %s", debug_expr_op_to_str(root.flags), root.val->buf);
+		assm->comments[assm->count] = string_create(buf);
+		enum REG sreg;
+		size_t val;
+		if (root.flags & EXPR_ISNUM) {
+			val = atoi(root.val->buf);
+		} else {
+			sreg = (enum REG)table_get(tbl, root.val);
+			if ((void *)sreg == NULL) {
+				fprintf(stderr, "Undefined symbol: %s", root.val->buf);
+				return -1;
+			}
+		}
+		if (parse_op(assm, root.flags, dreg, sreg, val) < 0)
 			return -1;
 	} else {
-		debug_asm("; EXPR_START");
-		const char *treg = get_temp_reg();
-		printf("\tmov\t%s,rax\n", treg);
+		assm->comments[assm->count++] = string_create("EXPR_START");
+		enum REG treg = get_temp_reg();
+		op_t op = { .op = PUSH, .src = AX };
+		assm->lines[assm->count++] = op;
 		for (size_t i = 0; i < root.len; i++) {
-			if (_eval_expr(root.branches[i], tbl) < 0)
+			if (_eval_expr(assm, dreg, root.branches[i], tbl) < 0)
 				return -1;
 		}
-		if (print_op(root.flags, treg) < 0)
+		if (parse_op(assm, root.flags, dreg, treg, -1) < 0)
 			return -1;
 		free_temp_reg(treg);
-		debug_asm("; EXPR_END");
+		op.op   = POP;
+		op.dest = op.src;
+		assm->lines[assm->count++] = op;
+		assm->comments[assm->count++] = string_create("EXPR_END");
 	}
 	return 0;
 }
 
 
-static int eval_expr(expr_branch root, const char *dreg, table *tbl)
+static int eval_expr(assembly_t *assm, expr_branch root, enum REG dreg, table *tbl)
 {
-	int dreg_is_acc = strcmp(dreg, "rax") == 0;
 	if (root.flags & EXPR_ISLEAF) {
-		debug_asm("; OP '%s'", root.val->buf);
-		const char *arg = get_val_or_reg(root, tbl);
-		if (arg == NULL)
-			return -1;
-		printf("\tmov\t%s,%s\n", dreg, arg);
+		string s[] = { string_create("OP "), root.val };
+		assm->comments[assm->count] = string_concat(s, 2);
+		free(s[0]);
+		op_t op = { .op = MOV, .dest = dreg };
+		op.src.is_num = !!(root.flags & EXPR_ISNUM);
+		if (op.src.is_num) {
+			op.src.val = atoi(root.val->buf);
+		} else {
+			op.src.reg = (enum REG)table_get(tbl, root.val);
+			if ((void *)op.src.reg == NULL) {
+				fprintf(stderr, "'%s' is not defined\n", root.val->buf);
+				return -1;
+			}
+		}
+		assm->lines[assm->count++] = op;
 	// Tip: if it is not a leaf, it has at least 2 branches
 	} else {
-		int offset;
-		debug_asm("; EXPR2_START");
-		const char *op;
+
+		int offset, expr2 = 1;
+		op_t op = { .dest = dreg }, tmp;// = { .dest = dreg };
+		if (dreg != AX) {
+			op_t mov = { .op = PUSH, .src = AX };
+			tmp = mov;
+			assm->lines[assm->count++] = tmp;
+		}
+
 		expr_branch br0 = root.branches[0], br1 = root.branches[1];
 		switch (br1.flags & EXPR_OP_MASK) {
-		case EXPR_OP_A_ADD: op = "add"; break;
-		case EXPR_OP_A_SUB: op = "sub"; break;
+		case EXPR_OP_A_ADD: op.op = ADD; break;
+		case EXPR_OP_A_SUB: op.op = SUB; break;
 		default:
-			debug_asm("; No EXPR2 optimization");
 			offset = 0;
+			expr2  = 0;
 			goto default_parse;
-			break;	
 		}
-		// dreg will be overwritten anyways, so just use it
-		// Constant can be used directly in most instructions, so check for those
-		const char *t0;
-		// Manually using push and pop to remove redundant pushes and pops in the middle
-		if (!dreg_is_acc)
-			printf("\tpush\trax\n");
+		assm->comments[assm->count++] = string_create("EXPR2_START");
 		if (br0.flags & EXPR_ISLEAF && br0.flags & EXPR_ISNUM) {
-			eval_expr(br1, "rax", tbl);
-			t0 = br0.val->buf;
+			eval_expr(assm, br1, AX, tbl);
+			op.src.is_num = 1;
+			op.src.val = atoi(br0.val->buf);
 		} else if (br1.flags & EXPR_ISLEAF && br1.flags & EXPR_ISNUM) {
-			eval_expr(br0, "rax", tbl);
-			t0 = br1.val->buf;
+			eval_expr(assm, br0, AX, tbl);
+			op.src.is_num = 1;
+			op.src.val = atoi(br1.val->buf);
 		} else {
-			eval_expr(br0, "rax", tbl);
-			printf("\tmov\t%s,rax\n", dreg);
-			const char *t0 = get_temp_reg();
-			eval_expr(br1, "rax", tbl);
-			free_temp_reg(t0);
+			eval_expr(assm, br0, AX, tbl);
+			op.src.reg = get_temp_reg();
+			op_t o = { .op = MOV, .dest = op.src, .src = AX };
+			assm->lines[assm->count++] = o;
+			eval_expr(assm, br1, AX, tbl);
+			free_temp_reg(op.src.reg);
 		}
-		printf("\t%s\t%s,%s\n", op, dreg, t0);
+		op_t mov = { .op = MOV, .dest = dreg, .src = AX };
+		assm->lines[assm->count++] = mov;
+		assm->lines[assm->count++] = op;
 		offset = 2;
 	default_parse:
 		for (size_t i = offset; i < root.len; i++) { 
-			if (_eval_expr(root.branches[i], tbl) < 0)
+			if (_eval_expr(assm, dreg, root.branches[i], tbl) < 0)
 				return -1;
 		}
-		if (!dreg_is_acc) {
-			printf("\tmov\t%s,rax\n"
-			       "\tpop\trax\n", dreg);
+
+		if (dreg != AX) {
+			if (!expr2) {
+				op_t mov = { .op = MOV, .dest = dreg, .src = AX };
+				assm->lines[assm->count++] = mov;
+				free_temp_reg(tmp.dest.reg);
+			}
+			op_t pop = { .op = POP, .dest = AX };
+			assm->lines[assm->count++] = pop;
 		}
-		printf("; EXPR2_END\n");
+		if (expr2)
+			assm->comments[assm->count++] = string_create("EXPR2_END");
 	}
 	return 0;
 }
 
 
-static int print_jump_op(const char *lbl, int flags)
+static int print_jump_op(assembly_t *assm, string lbl, int flags)
 {
-	const char *op;
+	op_t op = { .label = lbl };
 	// Note: jumps are "reversed" because the branch after if should be executed
 	switch(flags & EXPR_OP_MASK) {
-		case EXPR_OP_C_GRT: op = "jle"; break;
-		case EXPR_OP_C_LST: op = "jge"; break;
-		case EXPR_OP_C_GET: op = "jl" ; break;
-		case EXPR_OP_C_LET: op = "jg" ; break;
+		case EXPR_OP_C_GRT: op.op = JLE; break;
+		case EXPR_OP_C_LST: op.op = JGE; break;
+		case EXPR_OP_C_GET: op.op = JL ; break;
+		case EXPR_OP_C_LET: op.op = JG ; break;
 		default: fprintf(stderr, "print_jump_op\n"); exit(1); break;
 	}
-	printf("\t%s\t%s\n", op, lbl);
+	assm->lines[assm->count++] = op;
 	return 0;
 }
 
-static int parse_if_expr(const char *lbl, expr_branch br, table *tbl)
+static int parse_if_expr(assembly_t *assm, string lbl, expr_branch br, table *tbl)
 {
 	while (!(br.flags & EXPR_ISLEAF) && br.len == 1)
 		br = br.branches[br.len - 1];
 	if (br.flags & EXPR_ISLEAF) {
-
+		/* TODO */
 	} else if (br.len == 2) {
 		expr_branch e0 = br.branches[0];
 		expr_branch e1 = br.branches[1];
 		int e1f = e1.flags;
 		e1.flags &= ~EXPR_OP_MASK;
-		const char *tr0 = get_temp_reg();
-		eval_expr(e0, tr0, tbl);
-		const char *tr1 = get_temp_reg();
-		eval_expr(e1, tr1, tbl);
-		printf("\tcmp\t%s,%s\n", tr0, tr1);
+		enum REG tr0 = get_temp_reg();
+		eval_expr(assm, e0, tr0, tbl);
+		enum REG tr1 = get_temp_reg();
+		eval_expr(assm, e1, tr1, tbl);
+		op_t cmp = { .op = CMP, .src = tr1, .dest = tr0 };
+		assm->lines[assm->count++] = cmp;
 		free_temp_reg(tr0);
 		free_temp_reg(tr1);
-		if (print_jump_op(lbl, e1f) < 0)
+		if (print_jump_op(assm, lbl, e1f) < 0)
 			return -1;
 	} else {
 		debug("TODO (parse_if_expr)");
@@ -269,32 +420,35 @@ static int parse_if_expr(const char *lbl, expr_branch br, table *tbl)
 	return 0;
 }
 
-static int parse_control_word(branch *brs, size_t *index, table *tbl)
+static int parse_control_word(assembly_t *assm, branch *brs, size_t *index, table *tbl)
 {
 	branch br = brs[*index];
 	if (br.flags & BRANCH_CTYPE_IF) {
-		debug_asm("; IF\n");
+		assm->comments[assm->count++] = string_create("IF");
 		branch *brelse = &brs[*index + 2];
 		if (!(brelse->flags & BRANCH_TYPE_C && brelse->flags & BRANCH_CTYPE_ELSE))
 			brelse = NULL;
-		char buf[16], buf2[16], *lbl = buf;
-		get_label(buf, brelse == NULL ? "end" : "else");
-		parse_if_expr(lbl, *br.expr, tbl);
+		string lbl = get_label(brelse == NULL ? "end" : "else");
+		parse_if_expr(assm, lbl, *br.expr, tbl);
 		(*index)++;
-		parse(brs, index, tbl);
+		parse(assm, brs, index, tbl);
 		if (brelse != NULL) {
-			get_label(buf2, "end");
-			printf("\tjmp\t%s\n", buf2);
-			printf("%s:\n", lbl);
-			lbl = buf2;
+			string lblelse = get_label("end");
+			op_t jmp = { .op = JMP, .label = lblelse };
+			op_t l   = { .label = lbl, .is_label = 1 };
+			assm->lines[assm->count++] = jmp;
+			assm->lines[assm->count++] = l;
+			lbl = lblelse;
 			(*index) += 2;
-			parse(brs, index, tbl);
+			parse(assm, brs, index, tbl);
 		}
-		printf("%s:\n", lbl);
+		op_t l = { .label = lbl, .is_label = 1 };
+		assm->lines[assm->count++] = l;
 	} else if (br.flags & BRANCH_CTYPE_RET) {
-		debug_asm("; RET\n");
-		eval_expr(*br.expr, "rax", tbl);
-		printf("ret\n");
+		assm->comments[assm->count++] = string_create("RET");
+		eval_expr(assm, *br.expr, AX, tbl);
+		op_t op = { .op = RET };
+		assm->lines[assm->count++] = op;
 	} else if (br.flags & BRANCH_CTYPE_ELSE) {
 		fprintf(stderr, "'ELSE' without 'IF' (should have been caught earlier, please file a bug report)\n");
 		return -1;
@@ -305,111 +459,258 @@ static int parse_control_word(branch *brs, size_t *index, table *tbl)
 	return 0;
 }
 
-static int parse_var(branch br, table *tbl)
+static int parse_var(assembly_t *assm, branch br, table *tbl)
 {
 	info_var *inf = br.ptr;
-	debug_asm("; VAR '%s' '%s'\n", inf->type->buf, inf->name->buf);
-	arg a;
+	string s[] = { string_create("VAR "), inf->type ? inf->type : string_create(""), string_create(" "), inf->name };
+	assm->comments[assm->count++] = string_concat(s, 4);
+	free(s[0]);
+	free(s[2]);
+	if (inf->type == NULL)
+		free(s[1]);
+	enum REG reg;
 	if (inf->type != NULL) {
-		a.type = inf->type->buf;
-		a.reg = get_temp_reg();
-		if (table_add(tbl, &inf->name, &a) < 0) {
+		reg = get_temp_reg();
+		if (table_add(tbl, inf->name, (void *)reg) < 0) {
 			fprintf(stderr, "Duplicate symbol: '%s'\n", inf->name->buf);
 			return -1;
 		}
-	} else if (table_get(tbl, &inf->name->buf, &a) < 0) {
-		fprintf(stderr, "Undefined symbol: '%s'\n", inf->name->buf);
-		return -1;
+	} else {
+		reg = (enum REG)table_get(tbl, inf->name); 
+		if ((void *)reg == NULL) {
+			fprintf(stderr, "Undefined symbol: '%s'\n", inf->name->buf);
+			return -1;
+		}
 	}
-	return eval_expr(inf->expr, a.reg, tbl);
+	return eval_expr(assm, inf->expr, reg, tbl);
 }
 
-static int parse(branch *brs, size_t *index, table *tbl)
+static int parse(assembly_t *assm, branch *brs, size_t *index, table *tbl)
 {
 	branch br = brs[*index];
 	if (br.flags & BRANCH_ISLEAF) {
 		if (br.flags & BRANCH_TYPE_C)
-			return parse_control_word(brs, index, tbl);
+			return parse_control_word(assm, brs, index, tbl);
 		else if (br.flags & BRANCH_TYPE_VAR)
-			return parse_var(br, tbl);
+			return parse_var(assm, br, tbl);
 		fprintf(stderr, "Invalid type flags! 0x%x (Please file a bug report)\n", br.flags);
 		return -1;
 	} else {
 		for (size_t i = 0; i < br.len; i++) {
-			if (parse(br.ptr, &i, tbl) < 0)
+			if (parse(assm, br.ptr, &i, tbl) < 0)
 				return -1;
 		}
 	}
 	return 0;
 }
 
-static int convert_var(info_var *inf)
+#if 0
+static int convert_var(assembly_t *assm, info_var *inf)
 {
-	printf("%s:\t", inf->name->buf);
+	string strs[8] = { inf->name, string_create(":\t") };
+	size_t count = 2;
 	if (strcmp(inf->type->buf, "string") == 0) {
-		printf("db\t\"%s\"\n", "TODO");
-		printf("%s_len:\t equ $ - %s\n", inf->name->buf, inf->name->buf);
+		string strs2[4];
+		size_t count2 = 0;
+		strs[count++] = string_create("db\t\"");
+		strs[count++] = string_create("TODO");
+		strs[count++] = string_create("\"");
+		strs2[count2++] = inf->name;
+		strs2[count2++] = string_create("_len:\tequ $ - ");
+		strs2[count2++] = inf->name;
+		strs2[count2++] = string_create("\n");
+		assm->lines[assm->count++] = string_concat(strs, count);
+		assm->lines[assm->count++] = string_concat(strs2, count2);
+		free(strs2[0]);
+		free(strs2[2]);
+		goto freestrs;
 	} else if (strcmp(inf->type->buf, "sbyte" ) == 0) {
-		printf("db\t%s\n", "TODO");
+		strs[count++] = string_create("db\t");
+		strs[count++] = string_create("TODO");
 	} else if (strcmp(inf->type->buf, "sshort") == 0) {
-		printf("dw\t%s\n", "TODO");
+		strs[count++] = string_create("dw\t");
+		strs[count++] = string_create("TODO");
 	} else if (strcmp(inf->type->buf, "sint"  ) == 0) {
-		printf("dd\t%s\n", "TODO");
+		strs[count++] = string_create("dd\t");
+		strs[count++] = string_create("TODO");
 	} else if (strcmp(inf->type->buf, "slong" ) == 0) {
-		printf("dq\t%s\n", "TODO");
+		strs[count++] = string_create("dq\t");
+		strs[count++] = string_create("TODO");
 	} else {
 		printf("Unknown type: %s\n", inf->type->buf);
 		return -1;
 	}
-	printf("\n");
+	assm->lines[assm->count++] = string_concat(strs, count);
+freestrs:
+	for (size_t i = 0; i < count; i++) {
+		if (i != 0 && i != 2)
+			free(strs[i]);
+	}
 	return 0;
 }
+#endif
 
-static int cmp_keys(const void *a, const void *b)
+static int cmp_keys(const void *x, const void *y)
 {
-	char *const *x = a, *const *y = b;
-	return strcmp(*x, *y);
+	return !string_eq((string)x, (string)y);
 }
 
-static int convert_func(info_func *inf, branch root)
+static int convert_func(assembly_t *assm, info_func *inf, branch root)
 {
 	if (inf->arg_count > sizeof(arg_regs) / sizeof(*arg_regs)) {
 		fprintf(stderr, "Function '%s' has %lu too many arguments (max: %lu)\n",
-		        inf->name, inf->arg_count - (sizeof(arg_regs) / sizeof(*arg_regs)),
+		        inf->name->buf, inf->arg_count - (sizeof(arg_regs) / sizeof(*arg_regs)),
 			sizeof(arg_regs) / sizeof(*arg_regs));
 		return -1;
 	}
 	table tbl;
-	table_init(&tbl, sizeof(char *), sizeof(arg), cmp_keys);
+	table_init(&tbl, cmp_keys);
 	for (char i = 0; i < inf->arg_count; i++) {
-		arg a;
-		a.type = inf->arg_types[i];
-		a.reg = arg_regs[i];
-		if (table_add(&tbl, &inf->arg_names[i], &a) < 0) {
+		enum REG reg = arg_regs[i];
+		if (table_add(&tbl, inf->arg_names[i], (void *)reg) < 0) {
 			fprintf(stderr, "Duplicate entry: %s\n", inf->arg_names[i]);
 			return -1;
 		}
 	}
-	printf("%s:\n", inf->name);
+	op_t func = { .label = inf->name, .is_label = 1 };
+	assm->lines[assm->count++] = func;
 	for (size_t i = 0; i < root.len; i++) {
-		if (parse(root.ptr, &i, &tbl) < 0)
+		if (parse(assm, root.ptr, &i, &tbl) < 0)
 			return -1;
 	}
-	printf("\n");
 	table_free(&tbl);
 	return 0;
 }
 
+
+static const char *arg_to_str(arg_t arg, unsigned int bits)
+{
+	static char buf[256];
+	if (arg.is_num) {
+		sprintf(buf, "%ld", arg.val);
+		return buf;
+	} else {
+		switch(bits) {
+		case BITS_64:
+			switch (arg.reg) {
+			case AX : return "rax";
+			case BX : return "rbx";
+			case CX : return "rcx";
+			case DX : return "rdx";
+			case R8 : return "r8" ;
+			case R9 : return "r9" ;
+			case R10: return "r10";
+			case R11: return "r11";
+			case R12: return "r12";
+			case R13: return "r13";
+			case R14: return "r14";
+			case R15: return "r15";
+			default:
+				sprintf(buf, "x86_64_inval_%u", arg.reg);
+				return buf;
+			}
+		default:
+			sprintf(buf, "inval_%u", 2 << (1 << bits));
+			return buf;
+		}
+	}
+}
+
+
+static int print_op(assembly_t *assm, size_t i)
+{
+	op_t op = assm->lines[i];
+	if (op.is_label) {
+		printf("%s:", op.label->buf);
+	} else if (op.op != 0) {
+		printf("\t");
+		arg_t s = op.src, d = op.dest;
+		unsigned int b = BITS_64; //op.bits;
+		switch (op.op) {
+		case MOV : printf("mov" ); break;
+		case PUSH: printf("push"); break;
+		case POP : printf("pop "); break;
+
+		case ADD : printf("add" ); break;
+		case SUB : printf("sub" ); break;
+		case IMUL: printf("imul"); break;
+		case IDIV: printf("idiv"); break;
+
+		case XOR: printf("xor"); break;
+
+		case CMP: printf("cmp"); break;
+
+		case JMP: printf("jmp"); break;
+		case JE : printf("je" ); break;
+		case JNE: printf("jne"); break;
+		case JL : printf("jl" ); break;
+		case JG : printf("jg" ); break;
+		case JLE: printf("jle"); break;
+		case JGE: printf("jge"); break;
+		case RET: printf("ret"); break;
+		default:
+			printf("INVAL_OP\t%u", op.op);
+		}
+		switch(op.op) {
+		case MOV:
+		case ADD:
+		case SUB:
+		case XOR:
+		case CMP:
+			printf("\t%s,%s", arg_to_str(d, b), arg_to_str(s, b));
+			break;
+
+		case IDIV:
+		case PUSH:
+			printf("\t%s", arg_to_str(s, b));
+			break;
+
+		case POP:
+			printf("\t%s", arg_to_str(d, b));
+			break;
+
+		case IMUL:
+			printf("\t%s,%s,%s", arg_to_str(d, b), arg_to_str(s, b), arg_to_str(op.arg2, b));
+			break;
+
+		case JMP:
+		case JE :
+		case JNE:
+		case JL :
+		case JG :
+		case JLE:
+		case JGE:
+			printf("\t%s", op.label->buf);
+			break;
+		case RET:
+			break;
+		default:
+			printf("\tUNDEFINED");
+		}
+	}
+	string c = assm->comments[i];
+	if (c != NULL)
+		printf("\t; %s", c->buf);
+	printf("\n");
+	return 0;
+}
+
+
 int asm_gen()
 {
-	int r = 0;
+	assembly_t assm = { .size = 65536, .count = 0 };
+	assm.lines = calloc(assm.size, sizeof(*assm.lines));
+	assm.comments = calloc(assm.size, sizeof(*assm.comments));
+
+#if 0
 	if (global_vars_count > 0) {
 		printf("SECTION .data\n");
 		for (size_t i = 0; i < global_vars_count; i++) {
-			if (convert_var(&global_vars[i]) < 0)
+			if (convert_var(&assm, &global_vars[i]) < 0)
 				return -1;	
 		}
 	}
+#endif
 #ifdef __linux__
 	printf("SECTION .text\n"
 	       "global _start\n"
@@ -435,8 +736,12 @@ int asm_gen()
 	       "\n");
 #endif
 	for (size_t i = 0; i < global_funcs_count; i++) {
-		if (convert_func(&global_funcs[i], global_func_branches[i]) < 0)
+		if (convert_func(&assm, &global_funcs[i], global_func_branches[i]) < 0)
 			return -1;
 	}
+	for (size_t i = 0; i < assm.count; i++)
+		print_op(&assm, i);
+	free(assm.lines);
+	free(assm.comments);
 	return 0;
 }

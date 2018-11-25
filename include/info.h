@@ -7,8 +7,8 @@
 // Currently only a placeholder for buffers
 // Should be deprecated and removed sometime
 typedef struct info {
-	char *type;
-	char *name;
+	string type;
+	string name;
 	char _[8192 - 2 * sizeof(char *)];
 } info;
 
@@ -19,8 +19,8 @@ typedef struct info_var {
 } info_var;
 
 typedef struct info_func {
-	char *type;
-	char *name;
+	string type;
+	string name;
 	size_t arg_count;
 	char *arg_types[256];
 	char *arg_names[256];

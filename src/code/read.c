@@ -104,9 +104,7 @@ int code_parse(char **pptr, char *end, info *inf)
 	while (!IS_WHITE(*ptr))
 		ptr++;
 	len = ptr - orgptr;
-	inf->type = malloc(len + 1);
-	memcpy(inf->type, orgptr, len);
-	inf->type[len] = 0;
+	inf->type = string_create(orgptr, len);
 	
 	SKIP_WHITE(ptr);
 	
@@ -114,9 +112,7 @@ int code_parse(char **pptr, char *end, info *inf)
 	while (!IS_WHITE(*ptr) && *ptr != '(' && *ptr != '=')
 		ptr++;
 	len = ptr - orgptr,
-	inf->name = malloc(len + 1);
-	memcpy(inf->name, orgptr, len);
-	inf->name[len] = 0;
+	inf->name = string_create(orgptr, len);
 	
 	SKIP_WHITE(ptr);
 	
@@ -167,7 +163,7 @@ done:
 	debug("GLOBAL FUNCTIONS: %lu", global_funcs_count);
 	for (size_t i = 0; i < global_funcs_count; i++) {
 		info_func *iv = &global_funcs[i];
-		debug("  name: '%s', type: '%s'", iv->name, iv->type);
+		debug("  name: '%s', type: '%s'", iv->name->buf, iv->type->buf);
 		for (size_t i = 0; i < iv->arg_count; i++)
 			debug("    name: '%s', type: '%s'", iv->arg_names[i], iv->arg_types[i]);
 		debug("'''%s'''", iv->body);

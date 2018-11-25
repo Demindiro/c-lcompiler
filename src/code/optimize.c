@@ -72,7 +72,7 @@ static int optimize_branch(branch *root)
 int code_optimize()
 {
 	for (size_t i = 0; i < global_funcs_count; i++) {
-		debug("Optimizing %s:", global_funcs[i].name);
+		debug("Optimizing %s:", global_funcs[i].name->buf);
 		if (optimize_branch(&global_func_branches[i]) < 0)
 			return 0;
 		debug_branch(global_func_branches[i]);
