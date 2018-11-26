@@ -7,152 +7,8 @@
 #include "code/read.h"
 #include "code/branch.h"
 #include "util.h"
-
-
-enum OP {
-	/* Arithemic */	
-	ADD = 100,
-	SUB,
-	IMUL,
-	IDIV,
-	
-	/* Bitswise */
-	AND = 1000,
-	OR,
-	XOR,
-	CMP,
-	
-	/* Jumps */
-	JMP = 10000,
-	JE,
-	JNE,
-	JG,
-	JL,
-	JLE,
-	JGE,
-	CALL,
-	RET,
-
-	/* Store/load */
-	MOV = 100000,
-	PUSH,
-	POP,
-};
-
-
-enum REG {
-	AX = 1, BX, CX, DX,
-	AL, AH, BL, BH,
-	CL, CH, DL, DH,
-	SI, DI, SP, BP,
-	IP,
-	CS, DS, SS, ES,
-	FS, GS,
-	R8 , R9 , R10, R11,
-	R12, R13, R14, R15,
-};
-
-
-#define BITS_8  0
-#define BITS_16 1
-#define BITS_32 2
-#define BITS_64 3
-
-
-typedef struct arg {
-	union {
-		enum REG reg;
-		size_t val;
-	};
-	unsigned int is_num : 1;
-} arg_t;
-
-
-typedef struct op {
-	enum OP op;
-	union {
-		string label;
-		//arg_t arg0;
-		arg_t src;
-	};
-	unsigned int is_label : 1;
-	unsigned int bits : 2;
-	union {
-		//arg_t arg1;
-		arg_t dest;
-	};
-	arg_t arg2;
-} op_t;
-
-
-typedef struct assembly {
-	size_t size;
-	size_t count;
-	op_t   *lines;
-	string *comments;
-} assembly_t;
-
-
-const char *var_types[] = {
-	"bool",
-	"byte",
-	"short",
-	"int",
-	"long",
-	"ubyte",
-	"ushort",
-	"uint",
-	"ulong",
-	"void",
-};
-
-
-enum REG  arg_regs[] = { DI, SI, DX, CX, R8, R9 };
-enum REG temp_regs[] = { R8, R9, R10, R11, R12, R13, R14, R15 }; 
-unsigned int temp_regs_taken;
-
-
-static string str_tab;
-static string str_comma;
-static string str_op_mov;
-static string str_op_add;
-static string str_op_sub;
-static string str_op_imul;
-static string str_op_idiv;
-static string str_op_push;
-static string str_op_pop;
-static string str_reg_rax;
-static string str_reg_rbx;
-static string str_reg_rcx;
-static string str_reg_rdx;
-
-__attribute__((constructor))
-void init_strs()
-{
-	str_tab     = string_create("\t");
-	str_comma   = string_create("," );
-
-	str_op_mov  = string_create("mov" );
-	str_op_add  = string_create("add" );
-	str_op_sub  = string_create("sub" );
-	str_op_imul = string_create("imum");
-	str_op_idiv = string_create("idiv");
-	str_op_push = string_create("push");
-	str_op_pop  = string_create("pop" );
-
-	str_reg_rax = string_create("rax");
-	str_reg_rbx = string_create("rbx");
-	str_reg_rcx = string_create("rcx");
-	str_reg_rdx = string_create("rdx");
-
-	const char *arg_regs_a[] = {
-		"rax", "rbx", "rcx", "rdx",
-	};
-	const char *temp_regs_a[] = {
-		"r8" , "r9" , "r10", "r11",
-		"r12", "r13", "r14", "r15",
-	};
-}
+#include "x86.h"
+#include "optimize.h"
 
 
 static int parse(assembly_t *assm, branch *brs, size_t *index, table *tbl);
@@ -160,16 +16,17 @@ static int parse(assembly_t *assm, branch *brs, size_t *index, table *tbl);
 
 static enum REG get_temp_reg_once()
 {
-	for (size_t i = 0; i < sizeof(temp_regs) / sizeof(*temp_regs); i++) {
+	for (size_t i = 0; i < temp_regs_count; i++) {
 		if (!(temp_regs_taken & (2 << i)))
 			return temp_regs[i];
 	}
 	return -1;
 }
 
+
 static enum REG get_temp_reg()
 {
-	for (size_t i = 0; i < sizeof(temp_regs) / sizeof(*temp_regs); i++) {
+	for (size_t i = 0; i < temp_regs_count; i++) {
 		if (!(temp_regs_taken & (1 << i))) {
 			temp_regs_taken |= 1 << i;
 			return temp_regs[i];
@@ -177,6 +34,7 @@ static enum REG get_temp_reg()
 	}
 	return -1;
 }
+
 
 static string get_label(const char *prefix)
 {
@@ -188,21 +46,14 @@ static string get_label(const char *prefix)
 	return string_create(buf);
 }
 
+
 static void free_temp_reg(enum REG reg) {
-	for (size_t i = 0; i < sizeof(temp_regs) / sizeof(*temp_regs); i++) {
+	for (size_t i = 0; i < temp_regs_count; i++) {
 		if (temp_regs[i] == reg) {
 			temp_regs_taken &= ~(1 << i);
 			return;
 		}
 	}
-}
-
-static size_t is_var_type(char *str)
-{
-	for (size_t i = 0; i < sizeof(var_types) / sizeof(*var_types); i++)
-		if (strcmp(str, var_types[i]) == 0)
-			return i;
-	return -1;
 }
 
 
@@ -225,22 +76,20 @@ static int parse_op(assembly_t *assm, int flags, enum REG dest, enum REG src, si
 	if (op == IDIV) {
 		op_t push = { .op = PUSH, .src  = DX };
 		op_t zero = { .op = XOR , .dest = DX, .src = DX };
-		assm->lines[assm->count++] = push;
-		assm->lines[assm->count++] = zero;
+		assm_add_op(assm, &push);
+		assm_add_op(assm, &zero);
 		if (flags & EXPR_ISNUM) {
 			src = get_temp_reg_once();
 			op_t mov = { .op = MOV, .dest = src, .src = { .val = val, .is_num = 1 }};
-			assm->lines[assm->count++] = mov;
+			assm_add_op(assm, &mov);
 		}
 		op_t div  = { .op = op  , .src  = src };
-		//op_t mov  = { .op = MOV , .dest = dest, .src = src };
 		op_t pop  = { .op = POP , .dest = DX };
-		assm->lines[assm->count++] = div;
-		//assm->lines[assm->count++] = mov;
-		assm->lines[assm->count++] = pop;
+		assm_add_op(assm, &div);
+		assm_add_op(assm, &pop);
 	} else if (op == IMUL) {
-		op_t o = { .op = op, .dest = dest, .src = dest, .arg2 = src };
-		assm->lines[assm->count++] = o;
+		op_t o = { .op = op, .dest = dest, .src = dest };
+		assm_add_op(assm, &o);
 	} else {
 		op_t o = { .op = op, .dest = dest };
 		if (flags & EXPR_ISNUM) {
@@ -249,7 +98,7 @@ static int parse_op(assembly_t *assm, int flags, enum REG dest, enum REG src, si
 		} else {
 			o.src.reg = src;
 		}
-		assm->lines[assm->count++] = o;
+		assm_add_op(assm, &o);
 	}
 	return 0;
 }
@@ -261,7 +110,7 @@ static int _eval_expr(assembly_t *assm, enum REG dreg, expr_branch root, table *
 	if (root.flags & EXPR_ISLEAF) {
 		char buf[256];
 		sprintf(buf, "EXPR %s %s", debug_expr_op_to_str(root.flags), root.val->buf);
-		assm->comments[assm->count] = string_create(buf);
+		size_t index = assm->count;
 		enum REG sreg;
 		size_t val;
 		if (root.flags & EXPR_ISNUM) {
@@ -275,11 +124,13 @@ static int _eval_expr(assembly_t *assm, enum REG dreg, expr_branch root, table *
 		}
 		if (parse_op(assm, root.flags, dreg, sreg, val) < 0)
 			return -1;
+		assm_get_op(assm, assm->count-1)->comment = string_create(buf);
 	} else {
-		assm->comments[assm->count++] = string_create("EXPR_START");
+		op_t comm = { .comment = string_create("EXPR_START") };
+		assm_add_op(assm, &comm);
 		enum REG treg = get_temp_reg();
 		op_t op = { .op = PUSH, .src = AX };
-		assm->lines[assm->count++] = op;
+		assm_add_op(assm, &op);
 		for (size_t i = 0; i < root.len; i++) {
 			if (_eval_expr(assm, dreg, root.branches[i], tbl) < 0)
 				return -1;
@@ -289,8 +140,9 @@ static int _eval_expr(assembly_t *assm, enum REG dreg, expr_branch root, table *
 		free_temp_reg(treg);
 		op.op   = POP;
 		op.dest = op.src;
-		assm->lines[assm->count++] = op;
-		assm->comments[assm->count++] = string_create("EXPR_END");
+		assm_add_op(assm, &op);
+		comm.comment = string_create("EXPR_END"); 
+		assm_add_op(assm, &comm);
 	}
 	return 0;
 }
@@ -300,9 +152,8 @@ static int eval_expr(assembly_t *assm, expr_branch root, enum REG dreg, table *t
 {
 	if (root.flags & EXPR_ISLEAF) {
 		string s[] = { string_create("OP "), root.val };
-		assm->comments[assm->count] = string_concat(s, 2);
+		op_t op = { .op = MOV, .dest = dreg, .comment = string_concat(s, 2) };
 		free(s[0]);
-		op_t op = { .op = MOV, .dest = dreg };
 		op.src.is_num = !!(root.flags & EXPR_ISNUM);
 		if (op.src.is_num) {
 			op.src.val = atoi(root.val->buf);
@@ -313,7 +164,7 @@ static int eval_expr(assembly_t *assm, expr_branch root, enum REG dreg, table *t
 				return -1;
 			}
 		}
-		assm->lines[assm->count++] = op;
+		assm_add_op(assm, &op);
 	// Tip: if it is not a leaf, it has at least 2 branches
 	} else {
 
@@ -322,7 +173,7 @@ static int eval_expr(assembly_t *assm, expr_branch root, enum REG dreg, table *t
 		if (dreg != AX) {
 			op_t mov = { .op = PUSH, .src = AX };
 			tmp = mov;
-			assm->lines[assm->count++] = tmp;
+			assm_add_op(assm, &tmp);
 		}
 
 		expr_branch br0 = root.branches[0], br1 = root.branches[1];
@@ -334,7 +185,8 @@ static int eval_expr(assembly_t *assm, expr_branch root, enum REG dreg, table *t
 			expr2  = 0;
 			goto default_parse;
 		}
-		assm->comments[assm->count++] = string_create("EXPR2_START");
+		op_t comm = { .comment = string_create("EXPR2_START") };
+		assm_add_op(assm, &comm);
 		if (br0.flags & EXPR_ISLEAF && br0.flags & EXPR_ISNUM) {
 			eval_expr(assm, br1, AX, tbl);
 			op.src.is_num = 1;
@@ -347,13 +199,13 @@ static int eval_expr(assembly_t *assm, expr_branch root, enum REG dreg, table *t
 			eval_expr(assm, br0, AX, tbl);
 			op.src.reg = get_temp_reg();
 			op_t o = { .op = MOV, .dest = op.src, .src = AX };
-			assm->lines[assm->count++] = o;
+			assm_add_op(assm, &o);
 			eval_expr(assm, br1, AX, tbl);
 			free_temp_reg(op.src.reg);
 		}
 		op_t mov = { .op = MOV, .dest = dreg, .src = AX };
-		assm->lines[assm->count++] = mov;
-		assm->lines[assm->count++] = op;
+		assm_add_op(assm, &mov);
+		assm_add_op(assm, &op);
 		offset = 2;
 	default_parse:
 		for (size_t i = offset; i < root.len; i++) { 
@@ -364,14 +216,16 @@ static int eval_expr(assembly_t *assm, expr_branch root, enum REG dreg, table *t
 		if (dreg != AX) {
 			if (!expr2) {
 				op_t mov = { .op = MOV, .dest = dreg, .src = AX };
-				assm->lines[assm->count++] = mov;
+				assm_add_op(assm, &mov);
 				free_temp_reg(tmp.dest.reg);
 			}
 			op_t pop = { .op = POP, .dest = AX };
-			assm->lines[assm->count++] = pop;
+			assm_add_op(assm, &pop);
 		}
-		if (expr2)
-			assm->comments[assm->count++] = string_create("EXPR2_END");
+		if (expr2) {
+			op_t comm = { .comment = string_create("EXPR2_END") };
+			assm_add_op(assm, &comm);
+		}
 	}
 	return 0;
 }
@@ -388,7 +242,7 @@ static int print_jump_op(assembly_t *assm, string lbl, int flags)
 		case EXPR_OP_C_LET: op.op = JG ; break;
 		default: fprintf(stderr, "print_jump_op\n"); exit(1); break;
 	}
-	assm->lines[assm->count++] = op;
+	assm_add_op(assm, &op);
 	return 0;
 }
 
@@ -408,7 +262,7 @@ static int parse_if_expr(assembly_t *assm, string lbl, expr_branch br, table *tb
 		enum REG tr1 = get_temp_reg();
 		eval_expr(assm, e1, tr1, tbl);
 		op_t cmp = { .op = CMP, .src = tr1, .dest = tr0 };
-		assm->lines[assm->count++] = cmp;
+		assm_add_op(assm, &cmp);
 		free_temp_reg(tr0);
 		free_temp_reg(tr1);
 		if (print_jump_op(assm, lbl, e1f) < 0)
@@ -425,7 +279,8 @@ static int parse_control_word(assembly_t *assm, branch *brs, size_t *index, tabl
 {
 	branch br = brs[*index];
 	if (br.flags & BRANCH_CTYPE_IF) {
-		assm->comments[assm->count++] = string_create("IF");
+		op_t comm = { .comment = string_create("IF") };
+		assm_add_op(assm, &comm);
 		branch *brelse = &brs[*index + 2];
 		if (!(brelse->flags & BRANCH_TYPE_C && brelse->flags & BRANCH_CTYPE_ELSE))
 			brelse = NULL;
@@ -437,19 +292,20 @@ static int parse_control_word(assembly_t *assm, branch *brs, size_t *index, tabl
 			string lblelse = get_label("end");
 			op_t jmp = { .op = JMP, .label = lblelse };
 			op_t l   = { .label = lbl, .is_label = 1 };
-			assm->lines[assm->count++] = jmp;
-			assm->lines[assm->count++] = l;
+			assm_add_op(assm, &jmp);
+			assm_add_op(assm, &l);
 			lbl = lblelse;
 			(*index) += 2;
 			parse(assm, brs, index, tbl);
 		}
 		op_t l = { .label = lbl, .is_label = 1 };
-		assm->lines[assm->count++] = l;
+		assm_add_op(assm, &l);
 	} else if (br.flags & BRANCH_CTYPE_RET) {
-		assm->comments[assm->count++] = string_create("RET");
+		op_t comm = { .comment = string_create("RET") };
+		assm_add_op(assm, &comm);
 		eval_expr(assm, *br.expr, AX, tbl);
 		op_t op = { .op = RET };
-		assm->lines[assm->count++] = op;
+		assm_add_op(assm, &op);
 	} else if (br.flags & BRANCH_CTYPE_ELSE) {
 		fprintf(stderr, "'ELSE' without 'IF' (should have been caught earlier, please file a bug report)\n");
 		return -1;
@@ -465,7 +321,8 @@ static int parse_var(assembly_t *assm, branch br, table *tbl)
 {
 	info_var *inf = br.ptr;
 	string s[] = { string_create("VAR "), inf->type ? inf->type : string_create(""), string_create(" "), inf->name };
-	assm->comments[assm->count++] = string_concat(s, 4);
+	op_t comm = { .comment = string_concat(s, 4) };
+	assm_add_op(assm, &comm);
 	free(s[0]);
 	free(s[2]);
 	if (inf->type == NULL)
@@ -499,36 +356,37 @@ static int parse_call(assembly_t *assm, branch br, table *tbl)
 			goto referenced;
 	}
 	referenced_funcs[referenced_funcs_count++] = call->name;
-referenced:
 
-	assm->comments[assm->count++] = string_create("CALL");
-	for (size_t i = 0; i < sizeof(temp_regs) / sizeof(*temp_regs); i++) {
+referenced:;
+	op_t comm = { .comment = string_create("CALL") };
+	assm_add_op(assm, &comm);
+	for (size_t i = 0; i < temp_regs_count; i++) {
 		if (temp_regs_taken & (1 << i)) {
 			op_t op = { .op = PUSH, .src = temp_regs[i] };
-			assm->lines[assm->count++] = op;
+			assm_add_op(assm, &op);
 		}
 	}
-	enum REG argr[sizeof(arg_regs) / sizeof(*arg_regs)];
+	enum REG argr[arg_regs_count];
 	for (size_t i = 0; i < call->argc; i++) {
 		enum REG r = arg_regs[i];
 		if (1) { // TODO
 			op_t push = { .op = PUSH, .src = r };
-			assm->lines[assm->count++] = push;
+			assm_add_op(assm, &push);
 		}
 		eval_expr(assm, call->args[i], r, tbl);
 	}
 
 	op_t op = { .op = CALL, .label = call->name };
-	assm->lines[assm->count++] = op;
+	assm_add_op(assm, &op);
 
 	for (size_t i = call->argc - 1; i != -1; i--) {
 		op_t pop = { .op = POP, .dest = arg_regs[i] };
-		assm->lines[assm->count++] = pop;
+		assm_add_op(assm, &pop);
 	}
-	for (size_t i = sizeof(temp_regs) / sizeof(*temp_regs) - 1; i != -1; i--) {
+	for (size_t i = temp_regs_count - 1; i != -1; i--) {
 		if (temp_regs_taken & (1 << i)) {
 			op_t op = { .op = POP, .dest = temp_regs[i] };
-			assm->lines[assm->count++] = op;
+			assm_add_op(assm, &op);
 		}
 	}
 	return 0;
@@ -571,8 +429,8 @@ static int convert_var(assembly_t *assm, info_var *inf)
 		strs2[count2++] = string_create("_len:\tequ $ - ");
 		strs2[count2++] = inf->name;
 		strs2[count2++] = string_create("\n");
-		assm->lines[assm->count++] = string_concat(strs, count);
-		assm->lines[assm->count++] = string_concat(strs2, count2);
+		assm_add_op(assm, string_concat(strs, count);
+		assm_add_op(assm, string_concat(strs2, count2);
 		free(strs2[0]);
 		free(strs2[2]);
 		goto freestrs;
@@ -592,7 +450,7 @@ static int convert_var(assembly_t *assm, info_var *inf)
 		printf("Unknown type: %s\n", inf->type->buf);
 		return -1;
 	}
-	assm->lines[assm->count++] = string_concat(strs, count);
+	assm_add_op(assm, string_concat(strs, count);
 freestrs:
 	for (size_t i = 0; i < count; i++) {
 		if (i != 0 && i != 2)
@@ -609,10 +467,10 @@ static int cmp_keys(const void *x, const void *y)
 
 static int convert_func(assembly_t *assm, info_func *inf, branch root)
 {
-	if (inf->arg_count > sizeof(arg_regs) / sizeof(*arg_regs)) {
+	if (inf->arg_count > arg_regs_count) {
 		fprintf(stderr, "Function '%s' has %lu too many arguments (max: %lu)\n",
-		        inf->name->buf, inf->arg_count - (sizeof(arg_regs) / sizeof(*arg_regs)),
-			sizeof(arg_regs) / sizeof(*arg_regs));
+		        inf->name->buf, inf->arg_count - (arg_regs_count),
+			arg_regs_count);
 		return -1;
 	}
 	table tbl;
@@ -624,8 +482,6 @@ static int convert_func(assembly_t *assm, info_func *inf, branch root)
 			return -1;
 		}
 	}
-	op_t func = { .label = inf->name, .is_label = 1 };
-	assm->lines[assm->count++] = func;
 	for (size_t i = 0; i < root.len; i++) {
 		if (parse(assm, root.ptr, &i, &tbl) < 0)
 			return -1;
@@ -670,9 +526,8 @@ static const char *arg_to_str(arg_t arg, unsigned int bits)
 }
 
 
-static int print_op(assembly_t *assm, size_t i)
+static int print_op(op_t op)
 {
-	op_t op = assm->lines[i];
 	if (op.is_label) {
 		printf("%s:", op.label->buf);
 	} else if (op.op != 0) {
@@ -743,7 +598,7 @@ static int print_op(assembly_t *assm, size_t i)
 			printf("\tUNDEFINED");
 		}
 	}
-	string c = assm->comments[i];
+	string c = op.comment;
 	if (c != NULL)
 		printf("\t; %s", c->buf);
 	printf("\n");
@@ -751,12 +606,15 @@ static int print_op(assembly_t *assm, size_t i)
 }
 
 
+static void print_ops(assembly assm)
+{
+	for (op_t *op = assm->start; op != NULL; op = op->next)
+		print_op(*op);
+}
+
+
 int asm_gen()
 {
-	assembly_t assm = { .size = 65536, .count = 0 };
-	assm.lines = calloc(assm.size, sizeof(*assm.lines));
-	assm.comments = calloc(assm.size, sizeof(*assm.comments));
-
 #if 0
 	if (global_vars_count > 0) {
 		printf("SECTION .data\n");
@@ -790,17 +648,42 @@ int asm_gen()
 	       "\tsyscall\n"
 	       "\n");
 #endif
+	assembly_t assms[256];
+
 	for (size_t i = 0; i < global_funcs_count; i++) {
-		if (convert_func(&assm, &global_funcs[i], global_func_branches[i]) < 0)
+		assms[i].count = 1;
+		assms[i].start = calloc(1, sizeof(*assms->start));
+		assms[i].start->label = string_copy(global_funcs[i].name);
+		assms[i].start->is_label = 1;
+		assms[i].end   = assms[i].start;
+		if (convert_func(&assms[i], &global_funcs[i], global_func_branches[i]) < 0)
 			return -1;
 	}
+
 	for (size_t i = 0; i < global_funcs_count; i++)
 		printf("global %s\n", global_funcs[i].name->buf);
+
+	FILE *rstdout = stdout;
+	stdout = stderr;
+	fprintf(stderr, "-- Unoptimized --\n\n");
+	for (size_t i = 0; i < global_funcs_count; i++)
+		print_ops(&assms[i]);
+	stdout = rstdout;
+	fprintf(stderr, "\n\n-- Optimized --\n\n");
+
+	for (size_t i = 0; i < global_funcs_count; i++) {
+		asm_optimize(&assms[i]);
+		print_ops(&assms[i]);
+	}
+
 	for (size_t i = 0; i < referenced_funcs_count; i++) // TODO
 		printf("extern %s\n", referenced_funcs[i]->buf);
-	for (size_t i = 0; i < assm.count; i++)
-		print_op(&assm, i);
-	free(assm.lines);
-	free(assm.comments);
+
+	for (size_t i = 0; i < global_funcs_count; i++) {
+		for (op_t *op = assms[i].start; op != NULL; op = op->next) {
+			free(op->comment);
+			free(op);
+		}
+	}
 	return 0;
 }

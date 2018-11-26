@@ -1,6 +1,6 @@
 int main()
 	{
-	int x = 104; print_int(z)
+	int x = 104; print_int(x)
 	int a = 500 - 200
 	int y = 500 - (2 * x); print_int(y)
 	int z = y / 2; print_int(z)
