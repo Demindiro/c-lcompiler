@@ -10,23 +10,35 @@ static string copy_line(const char *a, size_t len)
 	string str = malloc(sizeof(str->len) + len + 1);
 	
 	str->buf[0] = a[0];
-	int next_offset_0 = 0, next_offset_1 = 0;
-	for (size_t i = 1; i < len - 1; i++) {
-		if (strchr("=+-*/%<>|&^ \t\n", a[i]) != NULL) {
+	for (size_t i = 1; i < len; i++) {
+		if (strchr("=+-*/%<>|&^ \t\n()[]{},.;", a[i]) != NULL) {
 			if (strchr(" \t\n", a[i-1]) != NULL)
 				offset++;
-			if (strchr(" \t\n", a[i+1]) != NULL)
-				next_offset_1 = 1;
 		}
+		str->buf[i - offset] = a[i];
+	}
+	len -= offset;
+
+	a = str->buf;
+	offset = 0;
+	int next_offset_0 = 0, next_offset_1 = 0;
+	for (size_t i = 1; i < len - 1; i++) {
+		if (strchr("=+-*/%<>|&^ \t\n()[]{},.;", a[i]) != NULL)
+			next_offset_1 = strchr(" \t\n", a[i+1]) != NULL;
 		str->buf[i - offset] = a[i];
 		if (next_offset_0)
 			offset++;
 		next_offset_0 = next_offset_1;
 		next_offset_1 = 0;
 	}
-	str->buf[len - 1 - offset] = a[len - 1];
-	str->buf[len - offset] = 0;
-	str->len = len - offset;	
+	str->buf[len - offset - 1] = a[len - 1];
+	len -= offset;
+
+	for (size_t i = 0; i < len; i++)
+		str->buf[i] = strchr("\t\n", a[i]) == NULL ? a[i] : ' ';
+
+	str->buf[len] = 0;
+	str->len = len;
 	return realloc(str, sizeof(str->len) + str->len + 1);
 }
 
@@ -47,10 +59,10 @@ lines_t split_func(info_func func)
 		while (1) {
 			if (*ptr == '\n' || *ptr == ';' || *ptr == 0) {
 				char *p = ptr;
-				while (*p == ' ' || *p == '\t' || *p == ';')
+				while (*p == ' ' || *p == '\t' || *p == ';' || *p == '\n')
 					p--;
 				line_t l = { .row = lines.count + 1, .col = 0 };
-				l.str = copy_line(start, p - start);
+				l.str = copy_line(start, p - start + 1);
 				lines.lines[lines.count] = l;
 				lines.count++;
 				ptr++;
