@@ -122,6 +122,7 @@ static int _eval_expr(assembly_t *assm, enum REG dreg, expr_branch root, table *
 	if (root.flags & EXPR_ISLEAF) {
 		char buf[256];
 		sprintf(buf, "EXPR %s %s", debug_expr_op_to_str(root.flags), root.val->buf);
+		op_t *comm = assm->end;
 		size_t index = assm->count;
 		enum REG sreg;
 		size_t val;
@@ -136,7 +137,7 @@ static int _eval_expr(assembly_t *assm, enum REG dreg, expr_branch root, table *
 		}
 		if (parse_op(assm, root.flags, dreg, sreg, val) < 0)
 			return -1;
-		assm_get_op(assm, assm->count-1)->comment = string_create(buf);
+		comm->next->comment = string_create(buf);
 	} else {
 		op_t comm = { .comment = string_create("EXPR_START") };
 		assm_add_op(assm, &comm);
@@ -182,11 +183,6 @@ static int eval_expr(assembly_t *assm, expr_branch root, enum REG dreg, table *t
 
 		int offset, expr2 = 1;
 		op_t op = { .dest = dreg }, tmp;// = { .dest = dreg };
-		if (dreg != AX) {
-			op_t mov = { .op = PUSH, .src = AX };
-			tmp = mov;
-			assm_add_op(assm, &tmp);
-		}
 
 		expr_branch br0 = root.branches[0], br1 = root.branches[1];
 		switch (br1.flags & EXPR_OP_MASK) {
@@ -215,21 +211,13 @@ static int eval_expr(assembly_t *assm, expr_branch root, enum REG dreg, table *t
 		assm_add_op(assm, &mov);
 		assm_add_op(assm, &op);
 		offset = 2;
+
 	default_parse:
 		for (size_t i = offset; i < root.len; i++) { 
 			if (_eval_expr(assm, dreg, root.branches[i], tbl) < 0)
 				return -1;
 		}
 
-		if (dreg != AX) {
-			if (!expr2) {
-				op_t mov = { .op = MOV, .dest = dreg, .src = AX };
-				assm_add_op(assm, &mov);
-				free_temp_reg(tmp.dest.reg);
-			}
-			op_t pop = { .op = POP, .dest = AX };
-			assm_add_op(assm, &pop);
-		}
 		if (expr2) {
 			op_t comm = { .comment = string_create("EXPR2_END") };
 			assm_add_op(assm, &comm);
