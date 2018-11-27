@@ -17,7 +17,7 @@ static int parse(assembly_t *assm, branch *brs, size_t *index, table *tbl);
 static enum REG get_temp_reg_once()
 {
 	for (size_t i = 0; i < temp_regs_count; i++) {
-		if (!(temp_regs_taken & (2 << i)))
+		if (!(temp_regs_taken & (1 << i)))
 			return temp_regs[i];
 	}
 	return -1;
@@ -74,6 +74,12 @@ static int parse_op(assembly_t *assm, int flags, enum REG dest, enum REG src, si
 	default: fprintf(stderr, "Invalid expression operator flags! 0x%x (This is a bug)\n", flags); return -1;
 	}
 	if (op == IDIV) {
+		if (dest != AX) {
+			op_t push = { .op = PUSH, .src = AX };
+			op_t mov  = { .op = MOV, .dest = AX, .src = dest };
+			assm_add_op(assm, &push);
+			assm_add_op(assm, &mov );
+		}
 		op_t push = { .op = PUSH, .src  = DX };
 		op_t zero = { .op = XOR , .dest = DX, .src = DX };
 		assm_add_op(assm, &push);
@@ -87,8 +93,14 @@ static int parse_op(assembly_t *assm, int flags, enum REG dest, enum REG src, si
 		op_t pop  = { .op = POP , .dest = DX };
 		assm_add_op(assm, &div);
 		assm_add_op(assm, &pop);
+		if (dest != AX) {
+			op_t mov = { .op = MOV, .dest = dest, .src = AX };
+			op_t pop = { .op = POP, .dest = AX };
+			assm_add_op(assm, &mov);
+			assm_add_op(assm, &pop);
+		}
 	} else if (op == IMUL) {
-		op_t o = { .op = op, .dest = dest, .src = dest };
+		op_t o = { .op = op, .dest = dest, .src = (flags & EXPR_ISNUM) ? val : src };
 		assm_add_op(assm, &o);
 	} else {
 		op_t o = { .op = op, .dest = dest };
@@ -185,24 +197,20 @@ static int eval_expr(assembly_t *assm, expr_branch root, enum REG dreg, table *t
 			expr2  = 0;
 			goto default_parse;
 		}
+
 		op_t comm = { .comment = string_create("EXPR2_START") };
-		assm_add_op(assm, &comm);
-		if (br0.flags & EXPR_ISLEAF && br0.flags & EXPR_ISNUM) {
-			eval_expr(assm, br1, AX, tbl);
-			op.src.is_num = 1;
-			op.src.val = atoi(br0.val->buf);
-		} else if (br1.flags & EXPR_ISLEAF && br1.flags & EXPR_ISNUM) {
-			eval_expr(assm, br0, AX, tbl);
-			op.src.is_num = 1;
-			op.src.val = atoi(br1.val->buf);
-		} else {
-			eval_expr(assm, br0, AX, tbl);
-			op.src.reg = get_temp_reg();
-			op_t o = { .op = MOV, .dest = op.src, .src = AX };
-			assm_add_op(assm, &o);
-			eval_expr(assm, br1, AX, tbl);
-			free_temp_reg(op.src.reg);
-		}
+		if (dreg != AX)
+			assm_insert_op(assm, assm->count-1, &comm);
+		else
+			assm_add_op(assm, &comm);
+
+		eval_expr(assm, br1, AX, tbl);
+		op.src.reg = get_temp_reg();
+		op_t o = { .op = MOV, .dest = op.src, .src = AX };
+		assm_add_op(assm, &o);
+		eval_expr(assm, br0, AX, tbl);
+		free_temp_reg(op.src.reg);
+
 		op_t mov = { .op = MOV, .dest = dreg, .src = AX };
 		assm_add_op(assm, &mov);
 		assm_add_op(assm, &op);
@@ -366,20 +374,20 @@ referenced:;
 			assm_add_op(assm, &op);
 		}
 	}
+	for (size_t i = 0; i < assm->argc; i++) {
+		op_t push = { .op = PUSH, .src = arg_regs[i] };
+		assm_add_op(assm, &push);
+	}
+
 	enum REG argr[arg_regs_count];
 	for (size_t i = 0; i < call->argc; i++) {
 		enum REG r = arg_regs[i];
-		if (1) { // TODO
-			op_t push = { .op = PUSH, .src = r };
-			assm_add_op(assm, &push);
-		}
 		eval_expr(assm, call->args[i], r, tbl);
 	}
-
 	op_t op = { .op = CALL, .label = call->name };
 	assm_add_op(assm, &op);
 
-	for (size_t i = call->argc - 1; i != -1; i--) {
+	for (size_t i = assm->argc - 1; i != -1; i--) {
 		op_t pop = { .op = POP, .dest = arg_regs[i] };
 		assm_add_op(assm, &pop);
 	}
@@ -566,6 +574,7 @@ static int print_op(op_t op)
 		case SUB:
 		case XOR:
 		case CMP:
+		case IMUL:
 			printf("\t%s,%s", arg_to_str(d, b), arg_to_str(s, b));
 			break;
 
@@ -578,9 +587,8 @@ static int print_op(op_t op)
 			printf("\t%s", arg_to_str(d, b));
 			break;
 
-		case IMUL:
-			printf("\t%s,%s,%s", arg_to_str(d, b), arg_to_str(s, b), arg_to_str(op.arg2, b));
-			break;
+			//printf("\t%s,%s,%s", arg_to_str(d, b), arg_to_str(s, b), arg_to_str(op.arg2, b));
+			//break;
 
 		case CALL:
 		case JMP :
@@ -651,7 +659,9 @@ int asm_gen()
 	assembly_t assms[256];
 
 	for (size_t i = 0; i < global_funcs_count; i++) {
+		assms[i].argc = global_funcs[i].arg_count;
 		assms[i].count = 1;
+		assms[i].commentcount = 0;
 		assms[i].start = calloc(1, sizeof(*assms->start));
 		assms[i].start->label = string_copy(global_funcs[i].name);
 		assms[i].start->is_label = 1;
